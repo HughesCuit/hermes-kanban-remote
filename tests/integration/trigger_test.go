@@ -216,6 +216,11 @@ func TestTriggerAPI_ManualTrigger(t *testing.T) {
 		Capabilities: []string{"gpu"},
 	})
 
+	// Wait for the async onNodeOnline goroutine to complete — without this,
+	// the goroutine can race with task creation and promote/schedule the
+	// task before the API trigger call.
+	time.Sleep(200 * time.Millisecond)
+
 	// Create a task and force to pending
 	tc.TaskStore.Create("task_api_001", "GPU task", []string{"gpu"})
 	tc.TaskStore.SetStatus("task_api_001", scheduler.TaskPending)
