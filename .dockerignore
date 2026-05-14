@@ -1,5 +1,7 @@
 .git
 *.md
-configs/
 test-e2e.sh
-.github/
+.env
+.env.example
+docker-compose*.yml
+Dockerfile*
