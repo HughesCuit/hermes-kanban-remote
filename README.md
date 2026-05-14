@@ -10,6 +10,9 @@
 
 - **多机任务协同** — 分布式 Worker 执行，跨设备任务调度
 - **能力感知调度** — 基于节点 capabilities 的智能任务分配
+- **动态能力更新** — 运行时更新节点能力，自动重新调度 pending tasks
+- **全局状态视图** — 跨集群统一查询节点、任务、租约状态，支持多维过滤
+- **工作流依赖** — 任务依赖链管理、自动推进、触发链追踪
 - **任务租约管理** — 集群级 lease 机制，防止任务重复执行
 - **故障检测与恢复** — 自动检测离线节点，任务重新调度
 - **状态同步** — 节点间任务元数据、生命周期事件实时同步
@@ -87,6 +90,7 @@ watchdog:
 | POST | `/nodes/join` | 节点注册加入集群 |
 | POST | `/nodes/heartbeat` | 节点心跳上报 |
 | GET | `/nodes` | 列出所有已注册节点 |
+| PATCH | `/nodes/{id}/capabilities` | 动态更新节点能力（自动重调度） |
 
 ### 任务管理
 
@@ -95,6 +99,18 @@ watchdog:
 | POST | `/tasks` | 提交新任务 |
 | GET | `/tasks` | 列出所有任务 |
 | POST | `/tasks/{id}/complete` | 标记任务完成 |
+| POST | `/tasks/{id}/fail` | 标记任务失败（自动阻塞下游任务） |
+| POST | `/tasks/{id}/unblock` | 手动解除任务阻塞 |
+| POST | `/tasks/{id}/advance` | 手动推进工作流 |
+| POST | `/tasks/{id}/dependencies` | 设置任务依赖 |
+
+### 任务依赖与工作流
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/tasks/{id}/dependents` | 获取依赖某任务的下游任务 |
+| GET | `/tasks/{id}/trigger-chain` | 获取触发链 |
+| GET | `/workflow/graph` | 获取工作流依赖图 |
 
 ### 租约管理
 
@@ -103,6 +119,45 @@ watchdog:
 | POST | `/leases` | 创建任务租约 |
 | DELETE | `/leases/{id}` | 吊销租约 |
 | GET | `/leases` | 列出活跃租约 |
+
+### 全局状态视图
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/status` | 查询全局状态（支持 `?node=`, `?status=`, `?capability=` 过滤） |
+
+查询参数（可组合）：
+- `?node=<node_id>` — 按节点过滤
+- `?status=<pending|running|completed|failed|blocked>` — 按任务状态过滤
+- `?capability=<cap>` — 按节点能力过滤（匹配拥有该能力的节点上的任务）
+
+响应格式：
+```json
+{
+  "entries": [
+    {
+      "task_id": "t_xxx",
+      "task_title": "my task",
+      "task_status": "running",
+      "node_id": "node_main",
+      "node_name": "main-node",
+      "node_status": "online",
+      "capabilities": ["planning", "reviewing"],
+      "requires": [],
+      "lease_status": "active"
+    }
+  ],
+  "summary": {
+    "total_nodes": 3,
+    "online_nodes": 2,
+    "total_tasks": 15,
+    "tasks_by_status": {"pending": 5, "running": 3, "completed": 7},
+    "active_leases": 2
+  }
+}
+```
+
+> 注意：`summary` 始终返回全量未过滤数据，`entries` 按查询参数过滤。
 
 ### 同步与恢复
 
@@ -113,6 +168,12 @@ watchdog:
 | POST | `/recovery/trigger` | 触发故障恢复 |
 | GET | `/recovery/log` | 查看恢复日志 |
 | GET | `/recovery/stats` | 查看恢复统计 |
+
+### 调度触发
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/schedule/trigger` | 手动触发待调度任务 |
 
 ---
 
@@ -130,7 +191,9 @@ hermes-agent-cluster/
 │   ├── lease/                # 租约管理
 │   ├── recovery/             # 故障检测与恢复
 │   ├── scheduler/            # 任务调度与存储
-│   └── sync/                 # 状态同步协议
+│   ├── status/               # 全局状态视图
+│   ├── sync/                 # 状态同步协议
+│   └── workflow/             # 工作流依赖解析
 ├── tests/integration/        # 集成测试
 ├── cluster.yaml              # 配置文件
 ├── go.mod
@@ -148,6 +211,7 @@ hermes-agent-cluster/
 │ Cluster Registry   │
 │ Lease Manager      │
 │ Task Router        │
+│ Status View        │
 │ Remote API         │
 └─────────┬──────────┘
           │ HTTP
