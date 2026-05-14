@@ -26,6 +26,36 @@ func NewScheduler(registry *cluster.Registry, taskStore *TaskStore, leaseMgr *le
 	}
 }
 
+// TriggerPendingTasks scans pending tasks and promotes to ready if matching nodes exist.
+// Returns list of task IDs that were promoted.
+func (s *Scheduler) TriggerPendingTasks() []string {
+	pending := s.taskStore.GetPending()
+	nodes := s.registry.GetAll()
+
+	// Build scoring inputs for online nodes
+	var nodeInfos []capability.NodeInfo
+	for _, n := range nodes {
+		if n.Status == cluster.NodeOnline {
+			nodeInfos = append(nodeInfos, capability.NodeInfo{
+				ID:           n.ID,
+				Capabilities: n.Capabilities,
+				Load:         n.Load,
+				HeartbeatAge: time.Since(n.LastHeartbeat).Seconds(),
+			})
+		}
+	}
+
+	var promoted []string
+	for _, task := range pending {
+		ranked := capability.RankNodes(nodeInfos, task.Requires)
+		if len(ranked) > 0 {
+			s.taskStore.SetStatus(task.ID, TaskReady)
+			promoted = append(promoted, task.ID)
+		}
+	}
+	return promoted
+}
+
 // SchedulePending picks ready tasks and assigns them to the best matching node.
 // Returns list of (taskID, nodeID) pairs that were scheduled.
 func (s *Scheduler) SchedulePending() [][2]string {

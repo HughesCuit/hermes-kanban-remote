@@ -12,18 +12,26 @@ import (
 type TaskStatus string
 
 const (
+	TaskPending   TaskStatus = "pending"
 	TaskReady     TaskStatus = "ready"
 	TaskAssigned  TaskStatus = "assigned"
 	TaskRunning   TaskStatus = "running"
 	TaskCompleted TaskStatus = "completed"
 	TaskFailed    TaskStatus = "failed"
+	TaskBlocked   TaskStatus = "blocked"
 )
+
+// IsTerminal returns true if the task is in a final state.
+func IsTerminal(s TaskStatus) bool {
+	return s == TaskCompleted || s == TaskFailed
+}
 
 // Task represents a schedulable unit of work.
 type Task struct {
 	ID          string     `json:"id"`
 	Title       string     `json:"title"`
 	Requires    []string   `json:"requires"`
+	DependsOn   []string   `json:"depends_on,omitempty"` // task IDs this task depends on
 	Status      TaskStatus `json:"status"`
 	AssignedTo  string     `json:"assigned_to,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
@@ -164,4 +172,77 @@ func (s *TaskStore) GetAll() []*Task {
 		result = append(result, &cp)
 	}
 	return result
+}
+
+// GetAllMap returns a copy of all tasks keyed by ID.
+func (s *TaskStore) GetAllMap() map[string]*Task {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make(map[string]*Task, len(s.tasks))
+	for id, t := range s.tasks {
+		cp := *t
+		result[id] = &cp
+	}
+	return result
+}
+
+// GetPending returns all tasks in Pending status.
+func (s *TaskStore) GetPending() []*Task {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []*Task
+	for _, t := range s.tasks {
+		if t.Status == TaskPending {
+			cp := *t
+			result = append(result, &cp)
+		}
+	}
+	return result
+}
+
+// GetBlocked returns all tasks in Blocked status.
+func (s *TaskStore) GetBlocked() []*Task {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []*Task
+	for _, t := range s.tasks {
+		if t.Status == TaskBlocked {
+			cp := *t
+			result = append(result, &cp)
+		}
+	}
+	return result
+}
+
+// SetBlocked marks a task as blocked with a reason.
+func (s *TaskStore) SetBlocked(id, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return fmt.Errorf("task %s not found", id)
+	}
+	t.Status = TaskBlocked
+	t.FailReason = reason
+	t.UpdatedAt = time.Now()
+	t.Version++
+	return nil
+}
+
+// Unblock unblocks a task and sets it back to pending.
+func (s *TaskStore) Unblock(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return fmt.Errorf("task %s not found", id)
+	}
+	if t.Status != TaskBlocked {
+		return fmt.Errorf("task %s is not blocked", id)
+	}
+	t.Status = TaskPending
+	t.FailReason = ""
+	t.UpdatedAt = time.Now()
+	t.Version++
+	return nil
 }

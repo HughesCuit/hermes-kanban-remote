@@ -112,6 +112,8 @@ func (tc *TestCluster) SubmitTask(id, title string, requires []string) *schedule
 	if err != nil {
 		panic(fmt.Sprintf("SubmitTask: %v", err))
 	}
+	// Trigger pending tasks to promote to ready if nodes match, then schedule
+	tc.Scheduler.TriggerPendingTasks()
 	tc.Scheduler.SchedulePending()
 	return task
 }

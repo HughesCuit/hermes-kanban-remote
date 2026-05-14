@@ -26,13 +26,21 @@ type Node struct {
 
 // Registry manages cluster nodes.
 type Registry struct {
-	mu    sync.RWMutex
-	nodes map[string]*Node
+	mu            sync.RWMutex
+	nodes         map[string]*Node
+	onNodeOnline  func(nodeID string)
 }
 
 // NewRegistry creates a new node registry.
 func NewRegistry() *Registry {
 	return &Registry{nodes: make(map[string]*Node)}
+}
+
+// SetOnNodeOnline registers a callback to be called when a node comes online.
+func (r *Registry) SetOnNodeOnline(fn func(nodeID string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onNodeOnline = fn
 }
 
 // Register adds or updates a node.
@@ -44,11 +52,17 @@ func (r *Registry) Register(n *Node) {
 		existing.Capabilities = n.Capabilities
 		existing.Status = NodeOnline
 		existing.LastHeartbeat = time.Now()
+		if r.onNodeOnline != nil {
+			go r.onNodeOnline(n.ID)
+		}
 		return
 	}
 	n.Status = NodeOnline
 	n.LastHeartbeat = time.Now()
 	r.nodes[n.ID] = n
+	if r.onNodeOnline != nil {
+		go r.onNodeOnline(n.ID)
+	}
 }
 
 // Get returns a node by ID.
@@ -89,8 +103,12 @@ func (r *Registry) UpdateHeartbeat(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if n, ok := r.nodes[id]; ok {
+		wasOnline := n.Status == NodeOnline
 		n.LastHeartbeat = time.Now()
 		n.Status = NodeOnline
+		if !wasOnline && r.onNodeOnline != nil {
+			go r.onNodeOnline(id)
+		}
 	}
 }
 

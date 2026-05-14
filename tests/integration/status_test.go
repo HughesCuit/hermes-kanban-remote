@@ -14,6 +14,7 @@ import (
 	"github.com/heventure/hermes-agent-cluster/internal/recovery"
 	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
 	"github.com/heventure/hermes-agent-cluster/internal/sync"
+	"github.com/heventure/hermes-agent-cluster/internal/workflow"
 )
 
 func setupStatusServer(t *testing.T) *httptest.Server {
@@ -28,8 +29,9 @@ func setupStatusServer(t *testing.T) *httptest.Server {
 	leaderSync := sync.NewLeaderSync(stateStore, pusher)
 	sched := scheduler.NewScheduler(registry, taskStore, leaseMgr, 5*time.Minute)
 	detector := recovery.NewDetector(nil, nil, leaseMgr, recLog)
+	resolver := workflow.NewResolver(taskStore)
 
-	srv := api.NewServer(registry, sched, leaseMgr, detector, recLog, stateStore, receiver, leaderSync)
+	srv := api.NewServer(registry, sched, leaseMgr, detector, recLog, stateStore, receiver, leaderSync, resolver)
 	ts := httptest.NewServer(srv.Router)
 	return ts
 }

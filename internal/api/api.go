@@ -45,6 +45,7 @@ func NewServer(
 	stateStore *sync.StateStore,
 	receiver *sync.FollowerReceiver,
 	leaderSync *sync.LeaderSync,
+	resolver *workflow.Resolver,
 ) *Server {
 	sv := status.NewStatusView(registry, sched.GetTaskStore(), leaseMgr)
 	s := &Server{
@@ -58,6 +59,7 @@ func NewServer(
 		Receiver:   receiver,
 		LeaderSync: leaderSync,
 		StatusView: sv,
+		Resolver:   resolver,
 	}
 	s.Router.Use(middleware.Logger)
 	s.Router.Use(middleware.Recoverer)
@@ -76,6 +78,9 @@ func (s *Server) setupRoutes() {
 		r.Post("/tasks", s.handleSubmitTask)
 		r.Get("/tasks", s.handleListTasks)
 		r.Post("/tasks/{id}/complete", s.handleCompleteTask)
+		r.Post("/tasks/{id}/fail", s.handleFailTask)
+		r.Post("/tasks/{id}/unblock", s.handleUnblockTask)
+		r.Post("/tasks/{id}/advance", s.handleManualAdvance)
 
 		// Lease management
 		r.Post("/leases", s.handleCreateLease)
@@ -97,6 +102,7 @@ func (s *Server) setupRoutes() {
 		// Workflow / Dependencies
 		r.Post("/tasks/{id}/dependencies", s.handleSetDependencies)
 		r.Get("/tasks/{id}/dependents", s.handleGetDependents)
+		r.Get("/tasks/{id}/trigger-chain", s.handleGetTriggerChain)
 		r.Get("/workflow/graph", s.handleGetGraph)
 
 		// Global status view
@@ -211,6 +217,63 @@ func (s *Server) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 		s.Resolver.OnDependencyComplete(taskID)
 	}
 	writeJSON(w, map[string]string{"status": "completed"})
+}
+
+// --- Task Failure handler ---
+
+type failTaskRequest struct {
+	Reason string `json:"reason"`
+}
+
+func (s *Server) handleFailTask(w http.ResponseWriter, r *http.Request) {
+	limitBody(w, r)
+	taskID := chi.URLParam(r, "id")
+	var req failTaskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// Allow empty body for simple failure
+		req.Reason = "failed"
+	}
+	store := s.Scheduler.GetTaskStore()
+	if err := store.SetStatus(taskID, scheduler.TaskFailed); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	// Block downstream tasks that depend on this failed task
+	var blocked []string
+	if s.Resolver != nil {
+		blocked = s.Resolver.OnDependencyFailed(taskID)
+	}
+	writeJSON(w, map[string]interface{}{
+		"status":  "failed",
+		"blocked": blocked,
+	})
+}
+
+// --- Task Unblock handler ---
+
+func (s *Server) handleUnblockTask(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	store := s.Scheduler.GetTaskStore()
+	if err := store.Unblock(taskID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "unblocked"})
+}
+
+// --- Manual Advance handler ---
+
+func (s *Server) handleManualAdvance(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if s.Resolver == nil {
+		http.Error(w, "workflow resolver not configured", http.StatusInternalServerError)
+		return
+	}
+	if err := s.Resolver.ManualAdvance(taskID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "advanced"})
 }
 
 // --- Lease handlers ---
@@ -343,6 +406,20 @@ func (s *Server) handleGetDependents(w http.ResponseWriter, r *http.Request) {
 		"task_id":     taskID,
 		"dependents":  dependents,
 		"count":       len(dependents),
+	})
+}
+
+func (s *Server) handleGetTriggerChain(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if s.Resolver == nil {
+		http.Error(w, "workflow resolver not configured", http.StatusInternalServerError)
+		return
+	}
+	chain := s.Resolver.GetTriggerChain(taskID)
+	writeJSON(w, map[string]interface{}{
+		"task_id": taskID,
+		"chain":   chain,
+		"count":   len(chain),
 	})
 }
 

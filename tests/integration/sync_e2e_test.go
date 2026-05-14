@@ -15,6 +15,7 @@ import (
 	"github.com/heventure/hermes-agent-cluster/internal/recovery"
 	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
 	"github.com/heventure/hermes-agent-cluster/internal/sync"
+	"github.com/heventure/hermes-agent-cluster/internal/workflow"
 )
 
 // TestSyncReceive_EndToEnd verifies the full sync flow:
@@ -32,6 +33,7 @@ func TestSyncReceive_EndToEnd(t *testing.T) {
 	followerSyncReceiver := sync.NewFollowerReceiver(followerStateStore)
 
 	// Follower doesn't need leaderSync (it only receives, doesn't push)
+	followerResolver := workflow.NewResolver(scheduler.NewTaskStore())
 	followerServer := api.NewServer(
 		followerRegistry,
 		followerSched,
@@ -41,6 +43,7 @@ func TestSyncReceive_EndToEnd(t *testing.T) {
 		followerStateStore,
 		followerSyncReceiver,
 		nil, // no leaderSync on follower
+		followerResolver,
 	)
 
 	followerHTTP := httptest.NewServer(followerServer.Router)
@@ -56,6 +59,7 @@ func TestSyncReceive_EndToEnd(t *testing.T) {
 	leaderPusher := sync.NewHTTPPusher()
 	leaderSync := sync.NewLeaderSync(leaderStore, leaderPusher)
 
+	leaderResolver := workflow.NewResolver(scheduler.NewTaskStore())
 	leaderServer := api.NewServer(
 		leaderRegistry,
 		leaderSched,
@@ -65,6 +69,7 @@ func TestSyncReceive_EndToEnd(t *testing.T) {
 		leaderStore,
 		leaderReceiver,
 		leaderSync,
+		leaderResolver,
 	)
 
 	leaderHTTP := httptest.NewServer(leaderServer.Router)

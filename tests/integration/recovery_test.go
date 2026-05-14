@@ -66,6 +66,8 @@ func (tc *RecoveryTestCluster) SubmitTask(id, title string, requires []string) *
 	if _, err := tc.TaskStore.Create(id, title, requires); err != nil {
 		panic(fmt.Sprintf("SubmitTask: %v", err))
 	}
+	// Trigger pending tasks to promote to ready if nodes match, then schedule
+	tc.Scheduler.TriggerPendingTasks()
 	tc.Scheduler.SchedulePending()
 	t, _ := tc.TaskStore.Get(id)
 	return t

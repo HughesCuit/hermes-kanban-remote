@@ -18,6 +18,7 @@ import (
 	"github.com/heventure/hermes-agent-cluster/internal/recovery"
 	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
 	"github.com/heventure/hermes-agent-cluster/internal/sync"
+	"github.com/heventure/hermes-agent-cluster/internal/workflow"
 )
 
 func main() {
@@ -59,6 +60,18 @@ func main() {
 	// --- Scheduler: API -> Scheduler -> Lease ---
 	sched := scheduler.NewScheduler(registry, taskStore, leaseMgr, cfg.Lease.TTL)
 
+	// --- Workflow Resolver: dependency resolution + trigger mechanism ---
+	resolver := workflow.NewResolver(taskStore)
+
+	// --- Trigger: when a node comes online, promote pending tasks and schedule ---
+	registry.SetOnNodeOnline(func(nodeID string) {
+		promoted := sched.TriggerPendingTasks()
+		if len(promoted) > 0 {
+			log.Printf("trigger: promoted %d pending tasks for node %s", len(promoted), nodeID)
+			sched.SchedulePending()
+		}
+	})
+
 	// --- Recovery: Detector -> Revoker -> Rescheduler ---
 	revoker := recovery.NewRevoker(leaseMgr, recLog)
 	rescheduler := recovery.NewRescheduler(sched, recLog)
@@ -99,6 +112,7 @@ func main() {
 		stateStore,
 		receiver,
 		leaderSync,
+		resolver,
 	)
 
 	// --- Start background services ---
