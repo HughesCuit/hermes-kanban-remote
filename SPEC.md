@@ -657,3 +657,305 @@ Remote Process Management
 * 本地执行模型
 
 不被破坏。
+
+---
+
+# 21. 分布式工作流（Distributed Workflow）
+
+---
+
+## 21.1 Task Dependencies Model
+
+任务可以声明对其他任务的依赖关系，形成有向无环图（DAG）。
+
+### 依赖声明
+
+```yaml
+task:
+  id: task_deploy
+  depends_on: [task_build, task_test]
+```
+
+### 核心规则
+
+* **下游自动触发**：当 `depends_on` 中所有任务状态变为 `DONE`，下游任务自动进入 `READY`
+* **并行分支**：多个任务可以依赖同一个前置任务，互不影响地并行执行
+* **失败传播**：若前置任务失败，下游任务标记为 `BLOCKED`，不会执行
+* **循环检测**：系统拒绝任何会导致循环依赖的依赖声明
+
+### 依赖图可视化
+
+```text
+task_research ──┬──→ task_write ──→ task_review ──→ task_publish
+                │
+task_translate ─┘
+```
+
+* `task_write` 和 `task_translate` 并行执行
+* 两者完成后 `task_review` 才进入 `READY`
+* `task_review` 完成后 `task_publish` 自动触发
+
+### CLI 查看依赖
+
+```bash
+hermes remote workflow graph --project my-project
+```
+
+---
+
+## 21.2 Trigger Mechanism
+
+当任务完成时，系统自动评估并触发下游工作流。
+
+### 自动触发（Auto-trigger）
+
+任务状态变为 `DONE` 时，Cluster Registry 检查是否有下游任务：
+
+```yaml
+trigger:
+  type: auto
+  on: task_completed
+```
+
+### 条件触发（Conditional Trigger）
+
+仅在满足条件时触发：
+
+```yaml
+trigger:
+  type: conditional
+  condition: "result.quality_score >= 0.8"
+  on: task_completed
+```
+
+### 手动触发（Manual Trigger）
+
+PM 可通过 CLI 手动推进工作流：
+
+```bash
+hermes remote workflow advance task_review --force
+```
+
+### 触发链（Trigger Chain）
+
+```text
+task_a completes
+  → triggers task_b
+    → triggers task_c
+      → triggers task_d
+```
+
+系统支持最多 **10 层**的触发链深度，防止无限递归。
+
+### 触发配置示例
+
+```yaml
+workflow:
+  triggers:
+    - id: trigger_1
+      type: auto
+      on: task_completed
+      source_task: task_build
+      target_task: task_test
+    - id: trigger_2
+      type: conditional
+      on: task_completed
+      source_task: task_test
+      target_task: task_deploy
+      condition: "all_tests_passed"
+```
+
+---
+
+## 21.3 Global Status View
+
+PM 可通过单一命令查看所有节点的任务状态。
+
+### CLI 命令
+
+```bash
+# 查看所有节点的任务状态
+hermes remote status
+
+# 按节点过滤
+hermes remote status --node pc-5070ti
+
+# 按状态过滤
+hermes remote status --status BLOCKED
+
+# 按 capability 过滤
+hermes remote status --capability gpu
+
+# 按项目过滤
+hermes remote status --project ai-daily-news
+
+# 输出示例
+┌─────────────────┬──────────────┬──────────┬─────────┬──────────┐
+│ Task            │ Node         │ Status   │ Cap     │ Progress │
+├─────────────────┼──────────────┼──────────┼─────────┼──────────┤
+│ task_research   │ vps-cloud    │ DONE     │ research│ 100%     │
+│ task_write      │ nas-main     │ RUNNING  │ planner │ 65%      │
+│ task_translate  │ pc-5070ti    │ BLOCKED  │ gpu     │ 0%       │
+│ task_review     │ nas-main     │ WAITING  │ reviewer│ 0%       │
+└─────────────────┴──────────────┴──────────┴─────────┴──────────┘
+```
+
+### Dashboard Web UI
+
+Phase 2 将提供 Web Dashboard：
+
+```text
+http://nas.local:8787/dashboard
+```
+
+功能：
+
+* 集群节点拓扑图
+* 实时任务状态流
+* 依赖关系可视化
+* 节点资源使用率
+* 历史任务统计
+
+---
+
+## 21.4 Capability Configuration
+
+### 节点启动时声明能力
+
+节点加入集群时声明自身能力：
+
+```yaml
+node:
+  id: pc-5070ti
+  capabilities:
+    - coding
+    - gpu
+    - browser
+    - windows
+```
+
+### 动态能力更新
+
+节点升级/降级时可动态更新能力：
+
+```bash
+hermes remote capability update --add gpu-inference
+hermes remote capability remove --capability browser
+```
+
+### 能力匹配算法
+
+调度器使用 **精确匹配 + 优先级排序**：
+
+```text
+1. 过滤：仅保留 capabilities 包含 task.requires 所有项的节点
+2. 排序：按 capability 数量降序（能力越匹配越优先）
+3. 负载均衡：同等条件下选择负载最低的节点
+4. 回退：无匹配节点时标记 task 为 PENDING
+```
+
+### 能力声明示例
+
+```yaml
+# NAS 主节点
+capabilities:
+  - planner
+  - reviewer
+  - scheduler
+  - cluster-coordinator
+
+# PC 工作站
+capabilities:
+  - coding
+  - gpu
+  - gpu-inference
+  - browser
+  - windows
+
+# VPS 云服务器
+capabilities:
+  - research
+  - web-access
+  - long-running
+  - linux
+```
+
+---
+
+## 21.5 Cross-Node Workflow Example
+
+### AI Daily News Auto-Generation 项目
+
+#### 工作流定义
+
+```yaml
+workflow:
+  id: ai-daily-news
+  name: AI Daily News Auto-Generation
+
+  tasks:
+    - id: task_research
+      name: Research news sources
+      requires: [web-access]
+      node: vps-cloud
+
+    - id: task_write
+      name: Write news summary
+      requires: [planner]
+      depends_on: [task_research]
+      node: nas-main
+
+    - id: task_translate
+      name: Translate to Chinese
+      requires: [gpu]
+      depends_on: [task_research]
+      node: pc-5070ti
+
+    - id: task_review
+      name: Review and edit
+      requires: [reviewer]
+      depends_on: [task_write, task_translate]
+      node: nas-main
+
+    - id: task_publish
+      name: Publish to blog
+      requires: [web-access]
+      depends_on: [task_review]
+      node: vps-cloud
+```
+
+#### 依赖关系图
+
+```text
+              task_research
+              /            \
+    task_write              task_translate
+         \                   /
+          \                 /
+           task_review
+                |
+          task_publish
+```
+
+#### 执行顺序和并行策略
+
+```text
+时间轴 →
+─────────────────────────────────────────────────────────
+
+vps-cloud:    [task_research: 10min]──────────[task_publish: 2min]
+nas-main:                [task_write: 15min]──[task_review: 5min]
+pc-5070ti:              [task_translate: 12min]
+
+─────────────────────────────────────────────────────────
+总耗时: ~30min（若串行执行需 ~44min，节省 32%）
+```
+
+#### 执行流程
+
+1. PM 创建 workflow，系统按 `depends_on` 构建 DAG
+2. `task_research` 无依赖，立即调度到 `vps-cloud`（匹配 `web-access`）
+3. `task_research` 完成 → 自动触发 `task_write`（→ `nas-main`）和 `task_translate`（→ `pc-5070ti`）并行执行
+4. 两者都完成后 → `task_review` 进入 `READY`，调度到 `nas-main`
+5. `task_review` 完成 → `task_publish` 触发，调度到 `vps-cloud`
+6. 全部完成，workflow 标记为 `DONE`
