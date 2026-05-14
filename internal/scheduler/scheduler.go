@@ -49,8 +49,9 @@ func (s *Scheduler) TriggerPendingTasks() []string {
 	for _, task := range pending {
 		ranked := capability.RankNodes(nodeInfos, task.Requires)
 		if len(ranked) > 0 {
-			s.taskStore.SetStatus(task.ID, TaskReady)
-			promoted = append(promoted, task.ID)
+			if s.taskStore.PromoteIfPending(task.ID, TaskReady) {
+				promoted = append(promoted, task.ID)
+			}
 		}
 	}
 	return promoted

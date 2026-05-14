@@ -118,6 +118,22 @@ func (s *TaskStore) SetStatus(id string, status TaskStatus) error {
 	return nil
 }
 
+// PromoteIfPending atomically changes a task's status from pending to the
+// given status. Returns true only if the task was pending and got promoted.
+// This is safe for concurrent callers — only one will succeed.
+func (s *TaskStore) PromoteIfPending(id string, to TaskStatus) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok || t.Status != TaskPending {
+		return false
+	}
+	t.Status = to
+	t.UpdatedAt = time.Now()
+	t.Version++
+	return true
+}
+
 // SetAssigned marks a task as assigned to a node.
 func (s *TaskStore) SetAssigned(id, nodeID string) error {
 	s.mu.Lock()

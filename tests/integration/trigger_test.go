@@ -208,16 +208,17 @@ func TestTriggerPendingTasks_MultipleTasks(t *testing.T) {
 func TestTriggerAPI_ManualTrigger(t *testing.T) {
 	tc := NewTriggerTestCluster(60 * time.Second)
 
-	// Create a task and force to pending
-	tc.TaskStore.Create("task_api_001", "GPU task", []string{"gpu"})
-	tc.TaskStore.SetStatus("task_api_001", scheduler.TaskPending)
-
-	// Register a matching node
+	// Register a matching node FIRST (before any tasks exist, so the
+	// onNodeOnline callback finds nothing to promote).
 	tc.Registry.Register(&cluster.Node{
 		ID:           "node_api",
 		Name:         "API Node",
 		Capabilities: []string{"gpu"},
 	})
+
+	// Create a task and force to pending
+	tc.TaskStore.Create("task_api_001", "GPU task", []string{"gpu"})
+	tc.TaskStore.SetStatus("task_api_001", scheduler.TaskPending)
 
 	// Call the trigger API
 	body, _ := json.Marshal(map[string]interface{}{})
