@@ -13,7 +13,9 @@ import (
 	"github.com/heventure/hermes-agent-cluster/internal/lease"
 	"github.com/heventure/hermes-agent-cluster/internal/recovery"
 	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
+	"github.com/heventure/hermes-agent-cluster/internal/status"
 	"github.com/heventure/hermes-agent-cluster/internal/sync"
+	"github.com/heventure/hermes-agent-cluster/internal/workflow"
 )
 
 const maxBodySize = 1 << 20 // 1MB
@@ -29,6 +31,8 @@ type Server struct {
 	StateStore *sync.StateStore
 	Receiver   *sync.FollowerReceiver
 	LeaderSync *sync.LeaderSync
+	StatusView *status.StatusView
+	Resolver   *workflow.Resolver
 }
 
 // NewServer creates a new API server.
@@ -42,6 +46,7 @@ func NewServer(
 	receiver *sync.FollowerReceiver,
 	leaderSync *sync.LeaderSync,
 ) *Server {
+	sv := status.NewStatusView(registry, sched.GetTaskStore(), leaseMgr)
 	s := &Server{
 		Router:     chi.NewRouter(),
 		Registry:   registry,
@@ -52,6 +57,7 @@ func NewServer(
 		StateStore: stateStore,
 		Receiver:   receiver,
 		LeaderSync: leaderSync,
+		StatusView: sv,
 	}
 	s.Router.Use(middleware.Logger)
 	s.Router.Use(middleware.Recoverer)
@@ -84,6 +90,17 @@ func (s *Server) setupRoutes() {
 		r.Post("/recovery/trigger", s.handleRecoveryTrigger)
 		r.Get("/recovery/log", s.handleRecoveryLog)
 		r.Get("/recovery/stats", s.handleRecoveryStats)
+
+		// Schedule trigger
+		r.Post("/schedule/trigger", s.handleScheduleTrigger)
+
+		// Workflow / Dependencies
+		r.Post("/tasks/{id}/dependencies", s.handleSetDependencies)
+		r.Get("/tasks/{id}/dependents", s.handleGetDependents)
+		r.Get("/workflow/graph", s.handleGetGraph)
+
+		// Global status view
+		r.Get("/status", s.handleStatus)
 	})
 }
 
@@ -175,9 +192,9 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	// Try to schedule immediately
-	scheduled := s.Scheduler.SchedulePending()
-	_ = scheduled
+	// Try to schedule immediately: trigger pending tasks first, then schedule
+	s.Scheduler.TriggerPendingTasks()
+	s.Scheduler.SchedulePending()
 	writeJSON(w, task)
 }
 
@@ -189,6 +206,10 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 	s.Scheduler.GetTaskStore().SetStatus(taskID, scheduler.TaskCompleted)
+	// Auto-transition downstream tasks whose dependencies are now met
+	if s.Resolver != nil {
+		s.Resolver.OnDependencyComplete(taskID)
+	}
 	writeJSON(w, map[string]string{"status": "completed"})
 }
 
@@ -244,6 +265,17 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int64{"version": s.StateStore.Version()})
 }
 
+// --- Schedule trigger handler ---
+
+func (s *Server) handleScheduleTrigger(w http.ResponseWriter, r *http.Request) {
+	promoted := s.Scheduler.TriggerPendingTasks()
+	scheduled := s.Scheduler.SchedulePending()
+	writeJSON(w, map[string]interface{}{
+		"promoted":  promoted,
+		"scheduled": scheduled,
+	})
+}
+
 // --- Recovery handlers ---
 
 func (s *Server) handleRecoveryTrigger(w http.ResponseWriter, r *http.Request) {
@@ -270,7 +302,75 @@ func (s *Server) handleRecoveryStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, stats)
 }
 
+// --- Workflow / Dependency handlers ---
+
+type setDepsRequest struct {
+	DependsOn []string `json:"depends_on"`
+}
+
+func (s *Server) handleSetDependencies(w http.ResponseWriter, r *http.Request) {
+	limitBody(w, r)
+	taskID := chi.URLParam(r, "id")
+	var req setDepsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if s.Resolver == nil {
+		http.Error(w, "workflow resolver not configured", http.StatusInternalServerError)
+		return
+	}
+	if err := s.Resolver.SetDependencies(taskID, req.DependsOn); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	task, ok := s.Scheduler.GetTaskStore().Get(taskID)
+	if !ok {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, task)
+}
+
+func (s *Server) handleGetDependents(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if s.Resolver == nil {
+		http.Error(w, "workflow resolver not configured", http.StatusInternalServerError)
+		return
+	}
+	dependents := s.Resolver.GetDependents(taskID)
+	writeJSON(w, map[string]interface{}{
+		"task_id":     taskID,
+		"dependents":  dependents,
+		"count":       len(dependents),
+	})
+}
+
+func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
+	if s.Resolver == nil {
+		http.Error(w, "workflow resolver not configured", http.StatusInternalServerError)
+		return
+	}
+	graph := s.Resolver.GetGraph()
+	writeJSON(w, graph)
+}
+
 // ListenAndServe starts the server on the given address.
 func (s *Server) ListenAndServe(addr string) error {
 	return http.ListenAndServe(addr, s.Router)
+}
+
+// --- Status handler ---
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	filter := status.Filter{
+		NodeID:     r.URL.Query().Get("node"),
+		Status:     r.URL.Query().Get("status"),
+		Capability: r.URL.Query().Get("capability"),
+	}
+	entries, summary := s.StatusView.Query(filter)
+	writeJSON(w, map[string]interface{}{
+		"entries": entries,
+		"summary": summary,
+	})
 }
