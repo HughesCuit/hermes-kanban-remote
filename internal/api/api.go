@@ -9,11 +9,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/heventure/hermes-kanban-remote/internal/cluster"
-	"github.com/heventure/hermes-kanban-remote/internal/lease"
-	"github.com/heventure/hermes-kanban-remote/internal/recovery"
-	"github.com/heventure/hermes-kanban-remote/internal/scheduler"
-	"github.com/heventure/hermes-kanban-remote/internal/sync"
+	"github.com/heventure/hermes-agent-cluster/internal/cluster"
+	"github.com/heventure/hermes-agent-cluster/internal/lease"
+	"github.com/heventure/hermes-agent-cluster/internal/recovery"
+	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
+	"github.com/heventure/hermes-agent-cluster/internal/sync"
 )
 
 const maxBodySize = 1 << 20 // 1MB

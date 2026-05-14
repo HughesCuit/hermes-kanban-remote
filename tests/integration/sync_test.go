@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heventure/hermes-kanban-remote/internal/sync"
+	"github.com/heventure/hermes-agent-cluster/internal/sync"
 )
 
 // TestScenario3_StateSync verifies state synchronization between leader and followers:

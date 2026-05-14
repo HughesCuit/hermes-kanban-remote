@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heventure/hermes-kanban-remote/internal/scheduler"
+	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
 )
 
 // TestScenario1_NormalScheduling verifies the full scheduling flow:

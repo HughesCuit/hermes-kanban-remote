@@ -10,14 +10,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/heventure/hermes-kanban-remote/internal/api"
-	"github.com/heventure/hermes-kanban-remote/internal/cluster"
-	"github.com/heventure/hermes-kanban-remote/internal/config"
-	"github.com/heventure/hermes-kanban-remote/internal/heartbeat"
-	"github.com/heventure/hermes-kanban-remote/internal/lease"
-	"github.com/heventure/hermes-kanban-remote/internal/recovery"
-	"github.com/heventure/hermes-kanban-remote/internal/scheduler"
-	"github.com/heventure/hermes-kanban-remote/internal/sync"
+	"github.com/heventure/hermes-agent-cluster/internal/api"
+	"github.com/heventure/hermes-agent-cluster/internal/cluster"
+	"github.com/heventure/hermes-agent-cluster/internal/config"
+	"github.com/heventure/hermes-agent-cluster/internal/heartbeat"
+	"github.com/heventure/hermes-agent-cluster/internal/lease"
+	"github.com/heventure/hermes-agent-cluster/internal/recovery"
+	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
+	"github.com/heventure/hermes-agent-cluster/internal/sync"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func main() {
 		log.Fatalf("invalid config: %v", err)
 	}
 
-	log.Printf("starting hermes-kanban-remote | cluster=%s role=%s node=%s",
+	log.Printf("starting hermes-agent-cluster | cluster=%s role=%s node=%s",
 		cfg.Cluster.ID, cfg.Cluster.Role, cfg.Node.ID)
 
 	// --- Initialize core components ---

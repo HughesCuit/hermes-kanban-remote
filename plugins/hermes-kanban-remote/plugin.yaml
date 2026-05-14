@@ -1,7 +1,0 @@
-name: hermes-kanban-remote
-version: 0.1.0
-description: "Distributed Kanban cluster extension — multi-node task coordination via hermes-kanban-remote Go service"
-author: "Heventure Group"
-hooks:
-  - on_session_end
-pip_dependencies: []

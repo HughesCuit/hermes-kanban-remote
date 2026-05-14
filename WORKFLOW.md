@@ -1,4 +1,4 @@
-# hermes-kanban-remote 开发流程
+# hermes-agent-cluster 开发流程
 
 ## 人员配置
 
@@ -53,7 +53,7 @@
 
 ## GitHub 集成
 
-- 仓库: https://github.com/HughesCuit/hermes-kanban-remote
+- 仓库: https://github.com/HughesCuit/hermes-agent-cluster
 - Branch 策略: main (生产) + feature branches
 - PR 需要 review 通过后合并
 
@@ -61,10 +61,10 @@
 
 | 资源 | 地址 |
 |------|------|
-| GitHub | https://github.com/HughesCuit/hermes-kanban-remote |
-| 项目文档 | ~/.hermes/projects/hermes-kanban-remote/SPEC.md |
-| Discord Thread | #projects / hermes-kanban-remote |
-| Kanban Board | `hermes kanban --board hermes-kanban-remote list` |
+| GitHub | https://github.com/HughesCuit/hermes-agent-cluster |
+| 项目文档 | ~/.hermes/projects/hermes-agent-cluster/SPEC.md |
+| Discord Thread | #projects / hermes-agent-cluster |
+| Kanban Board | `hermes kanban --board hermes-agent-cluster list` |
 
 ## ⚠️ 质量门规则（Phase 1 踩坑总结）
 

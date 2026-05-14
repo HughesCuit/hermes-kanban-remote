@@ -1,12 +1,15 @@
-"""hermes-kanban-remote plugin — Distributed Kanban cluster for Hermes Agent.
+"""hermes-agent-cluster v0.1.0 — Distributed agent cluster coordination for Hermes Agent.
 
-Registers tools that let the agent interact with a hermes-kanban-remote cluster:
-- kanban_cluster_join: Join a cluster as worker
-- kanban_cluster_submit: Submit a task to the cluster
-- kanban_cluster_list: List tasks on the cluster
-- kanban_cluster_nodes: List cluster nodes
-- kanban_cluster_heartbeat: Send heartbeat
-- kanban_cluster_complete: Mark task as completed
+Registers 7 tools for multi-node agent task coordination:
+- agent_cluster_init: Initialize a new cluster (main/coordinator node)
+- agent_cluster_join: Join an existing cluster as a worker node
+- agent_cluster_submit: Submit a task for distributed execution
+- agent_cluster_list: List all tasks in the cluster
+- agent_cluster_nodes: List all nodes in the cluster
+- agent_cluster_heartbeat: Send heartbeat to indicate node is alive
+- agent_cluster_complete: Mark a task as completed with results
+
+Part of the Hermes Agent plugin ecosystem by Heventure Group.
 """
 
 from __future__ import annotations
@@ -63,7 +66,7 @@ def handle_cluster_init(args: dict, **kwargs) -> str:
     capabilities = args.get("capabilities", ["planning", "reviewing", "scheduling"])
 
     # Write config
-    config_dir = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "kanban-remote"
+    config_dir = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "agent-cluster"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "cluster.yaml"
 
@@ -129,7 +132,7 @@ def handle_cluster_join(args: dict, **kwargs) -> str:
     port = args.get("port", 8788)
 
     # Write config
-    config_dir = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "kanban-remote"
+    config_dir = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "agent-cluster"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "cluster-worker.yaml"
 
@@ -199,7 +202,7 @@ def handle_cluster_submit(args: dict, **kwargs) -> str:
     """Submit a task to the cluster."""
     base_url = _cluster_config.get("base_url")
     if not base_url:
-        return json.dumps({"error": "Not connected to cluster. Run kanban_cluster_init or kanban_cluster_join first."})
+        return json.dumps({"error": "Not connected to cluster. Run agent_cluster_init or agent_cluster_join first."})
 
     result = _api_call(base_url, "POST", "/api/v1/tasks", {
         "title": args.get("title", "Untitled task"),
@@ -264,8 +267,8 @@ def handle_cluster_complete(args: dict, **kwargs) -> str:
 # ---------------------------------------------------------------------------
 
 CLUSTER_INIT_SCHEMA = {
-    "name": "kanban_cluster_init",
-    "description": "Initialize a new hermes-kanban-remote cluster. This node becomes the main/coordinator node.",
+    "name": "agent_cluster_init",
+    "description": "Initialize a new hermes-agent-cluster cluster. This node becomes the main/coordinator node.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -279,8 +282,8 @@ CLUSTER_INIT_SCHEMA = {
 }
 
 CLUSTER_JOIN_SCHEMA = {
-    "name": "kanban_cluster_join",
-    "description": "Join an existing hermes-kanban-remote cluster as a worker node.",
+    "name": "agent_cluster_join",
+    "description": "Join an existing hermes-agent-cluster cluster as a worker node.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -296,7 +299,7 @@ CLUSTER_JOIN_SCHEMA = {
 }
 
 CLUSTER_SUBMIT_SCHEMA = {
-    "name": "kanban_cluster_submit",
+    "name": "agent_cluster_submit",
     "description": "Submit a task to the cluster for distributed execution.",
     "parameters": {
         "type": "object",
@@ -309,25 +312,25 @@ CLUSTER_SUBMIT_SCHEMA = {
 }
 
 CLUSTER_LIST_SCHEMA = {
-    "name": "kanban_cluster_list",
+    "name": "agent_cluster_list",
     "description": "List all tasks in the cluster.",
     "parameters": {"type": "object", "properties": {}},
 }
 
 CLUSTER_NODES_SCHEMA = {
-    "name": "kanban_cluster_nodes",
+    "name": "agent_cluster_nodes",
     "description": "List all nodes in the cluster.",
     "parameters": {"type": "object", "properties": {}},
 }
 
 CLUSTER_HEARTBEAT_SCHEMA = {
-    "name": "kanban_cluster_heartbeat",
+    "name": "agent_cluster_heartbeat",
     "description": "Send heartbeat to the cluster to indicate this node is alive.",
     "parameters": {"type": "object", "properties": {}},
 }
 
 CLUSTER_COMPLETE_SCHEMA = {
-    "name": "kanban_cluster_complete",
+    "name": "agent_cluster_complete",
     "description": "Mark a task as completed with results.",
     "parameters": {
         "type": "object",
@@ -345,28 +348,28 @@ CLUSTER_COMPLETE_SCHEMA = {
 # ---------------------------------------------------------------------------
 
 def register(ctx) -> None:
-    """Register kanban cluster tools with Hermes Agent."""
+    """Register agent cluster tools with Hermes Agent."""
     ctx.register_tool(
-        name="kanban_cluster_init",
-        toolset="kanban_cluster",
+        name="agent_cluster_init",
+        toolset="agent_cluster",
         schema=CLUSTER_INIT_SCHEMA,
         handler=handle_cluster_init,
-        description="Initialize a distributed kanban cluster",
+        description="Initialize a distributed agent cluster",
         emoji="🏗️",
     )
 
     ctx.register_tool(
-        name="kanban_cluster_join",
-        toolset="kanban_cluster",
+        name="agent_cluster_join",
+        toolset="agent_cluster",
         schema=CLUSTER_JOIN_SCHEMA,
         handler=handle_cluster_join,
-        description="Join an existing kanban cluster",
+        description="Join an existing agent cluster",
         emoji="🔗",
     )
 
     ctx.register_tool(
-        name="kanban_cluster_submit",
-        toolset="kanban_cluster",
+        name="agent_cluster_submit",
+        toolset="agent_cluster",
         schema=CLUSTER_SUBMIT_SCHEMA,
         handler=handle_cluster_submit,
         description="Submit a task to the cluster",
@@ -374,8 +377,8 @@ def register(ctx) -> None:
     )
 
     ctx.register_tool(
-        name="kanban_cluster_list",
-        toolset="kanban_cluster",
+        name="agent_cluster_list",
+        toolset="agent_cluster",
         schema=CLUSTER_LIST_SCHEMA,
         handler=handle_cluster_list,
         description="List cluster tasks",
@@ -383,8 +386,8 @@ def register(ctx) -> None:
     )
 
     ctx.register_tool(
-        name="kanban_cluster_nodes",
-        toolset="kanban_cluster",
+        name="agent_cluster_nodes",
+        toolset="agent_cluster",
         schema=CLUSTER_NODES_SCHEMA,
         handler=handle_cluster_nodes,
         description="List cluster nodes",
@@ -392,8 +395,8 @@ def register(ctx) -> None:
     )
 
     ctx.register_tool(
-        name="kanban_cluster_heartbeat",
-        toolset="kanban_cluster",
+        name="agent_cluster_heartbeat",
+        toolset="agent_cluster",
         schema=CLUSTER_HEARTBEAT_SCHEMA,
         handler=handle_cluster_heartbeat,
         description="Send cluster heartbeat",
@@ -401,12 +404,12 @@ def register(ctx) -> None:
     )
 
     ctx.register_tool(
-        name="kanban_cluster_complete",
-        toolset="kanban_cluster",
+        name="agent_cluster_complete",
+        toolset="agent_cluster",
         schema=CLUSTER_COMPLETE_SCHEMA,
         handler=handle_cluster_complete,
         description="Complete a cluster task",
         emoji="✅",
     )
 
-    logger.info("hermes-kanban-remote plugin registered 7 cluster tools")
+    logger.info("hermes-agent-cluster plugin registered 7 cluster tools")

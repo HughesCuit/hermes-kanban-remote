@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/heventure/hermes-kanban-remote/internal/lease"
+	"github.com/heventure/hermes-agent-cluster/internal/lease"
 )
 
 // OfflineEvent represents a node going offline.

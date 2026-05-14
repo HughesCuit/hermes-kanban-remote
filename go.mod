@@ -1,4 +1,4 @@
-module github.com/heventure/hermes-kanban-remote
+module github.com/heventure/hermes-agent-cluster
 
 go 1.21
 

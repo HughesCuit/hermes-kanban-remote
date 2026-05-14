@@ -1,8 +1,8 @@
-# hermes-kanban-remote
+# hermes-agent-cluster
 
-**Hermes 分布式 Kanban 集群扩展**
+**Hermes 分布式 Agent 集群扩展**
 
-`hermes-kanban-remote` 是 Hermes 的分布式集群扩展插件，允许多台设备上的独立 Hermes 实例协同工作。
+`hermes-agent-cluster` 是 Hermes 的分布式集群扩展插件，允许多台设备上的独立 Hermes 实例协同工作。
 
 ---
 
@@ -27,9 +27,9 @@
 ### 安装
 
 ```bash
-git clone https://github.com/heventure/hermes-kanban-remote.git
-cd hermes-kanban-remote
-go build -o kanban-cluster ./cmd/cluster
+git clone https://github.com/heventure/hermes-agent-cluster.git
+cd hermes-agent-cluster
+go build -o agent-cluster ./cmd/cluster
 ```
 
 ### 配置
@@ -68,10 +68,10 @@ watchdog:
 
 ```bash
 # 主节点
-./kanban-cluster
+./agent-cluster
 
 # 工作节点（修改 cluster.yaml 中的 node.id 和 capabilities）
-./kanban-cluster
+./agent-cluster
 ```
 
 ---
@@ -119,7 +119,7 @@ watchdog:
 ## 项目结构
 
 ```
-hermes-kanban-remote/
+hermes-agent-cluster/
 ├── cmd/cluster/main.go       # 主入口
 ├── internal/
 │   ├── api/                  # HTTP API 服务
@@ -179,7 +179,7 @@ bash e2e_test.sh
 
 ```bash
 # 构建
-go build -o kanban-cluster ./cmd/cluster
+go build -o agent-cluster ./cmd/cluster
 
 # 测试
 go test -race ./...

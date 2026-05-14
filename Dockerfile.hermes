@@ -24,10 +24,10 @@ COPY --from=go-builder /hermes-cluster /usr/local/bin/hermes-cluster
 RUN chmod +x /usr/local/bin/hermes-cluster
 
 # Copy plugin
-COPY plugins/hermes-kanban-remote/ /root/.hermes/plugins/hermes-kanban-remote/
+COPY plugins/hermes-agent-cluster/ /root/.hermes/plugins/hermes-agent-cluster/
 
 # Copy config
-COPY configs/ /root/.hermes/kanban-remote/
+COPY configs/ /root/.hermes/agent-cluster/
 
 RUN mkdir -p /root/.hermes
 

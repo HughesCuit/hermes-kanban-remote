@@ -1,12 +1,12 @@
 #!/bin/bash
-# E2E test script for hermes-kanban-remote cluster
+# E2E test script for hermes-agent-cluster cluster
 set -e
 
 MAIN="http://localhost:8787"
 WORKER="http://localhost:8788"
 
 echo "========================================="
-echo "  hermes-kanban-remote E2E Test"
+echo "  hermes-agent-cluster E2E Test"
 echo "========================================="
 
 # --- Test 1: Health check ---

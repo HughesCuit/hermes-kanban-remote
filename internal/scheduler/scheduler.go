@@ -3,9 +3,9 @@ package scheduler
 import (
 	"time"
 
-	"github.com/heventure/hermes-kanban-remote/internal/capability"
-	"github.com/heventure/hermes-kanban-remote/internal/cluster"
-	"github.com/heventure/hermes-kanban-remote/internal/lease"
+	"github.com/heventure/hermes-agent-cluster/internal/capability"
+	"github.com/heventure/hermes-agent-cluster/internal/cluster"
+	"github.com/heventure/hermes-agent-cluster/internal/lease"
 )
 
 // Scheduler orchestrates task assignment to nodes.

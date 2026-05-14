@@ -1,7 +1,7 @@
 package recovery
 
 import (
-	"github.com/heventure/hermes-kanban-remote/internal/lease"
+	"github.com/heventure/hermes-agent-cluster/internal/lease"
 )
 
 // Revoker revokes all leases for a failed node.

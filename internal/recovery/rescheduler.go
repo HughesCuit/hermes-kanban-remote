@@ -1,7 +1,7 @@
 package recovery
 
 import (
-	"github.com/heventure/hermes-kanban-remote/internal/scheduler"
+	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
 )
 
 // Rescheduler handles reassigning tasks after node failure.

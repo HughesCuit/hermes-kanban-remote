@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heventure/hermes-kanban-remote/internal/lease"
-	"github.com/heventure/hermes-kanban-remote/internal/scheduler"
+	"github.com/heventure/hermes-agent-cluster/internal/lease"
+	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
 )
 
 // TestScenario4_LeaseExpiration verifies lease lifecycle:

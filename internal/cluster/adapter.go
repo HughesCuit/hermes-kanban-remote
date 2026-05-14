@@ -1,6 +1,6 @@
 package cluster
 
-import "github.com/heventure/hermes-kanban-remote/internal/heartbeat"
+import "github.com/heventure/hermes-agent-cluster/internal/heartbeat"
 
 // RegistryAdapter bridges cluster.Registry to the heartbeat.HeartbeatRegistry interface.
 // Used by heartbeat.Watchdog to observe node statuses from the cluster registry.

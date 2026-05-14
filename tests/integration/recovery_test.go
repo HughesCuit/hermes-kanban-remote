@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heventure/hermes-kanban-remote/internal/cluster"
-	"github.com/heventure/hermes-kanban-remote/internal/lease"
-	"github.com/heventure/hermes-kanban-remote/internal/recovery"
-	"github.com/heventure/hermes-kanban-remote/internal/scheduler"
+	"github.com/heventure/hermes-agent-cluster/internal/cluster"
+	"github.com/heventure/hermes-agent-cluster/internal/lease"
+	"github.com/heventure/hermes-agent-cluster/internal/recovery"
+	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
 )
 
 // RecoveryTestCluster is a simplified cluster for recovery testing

@@ -1,12 +1,12 @@
-# hermes-kanban-remote
+# hermes-agent-cluster
 
-## Hermes 分布式 Kanban 集群扩展
+## Hermes 分布式 Agent 集群扩展
 
 ---
 
 # 1. 项目概述
 
-`hermes-kanban-remote` 是 Hermes 的分布式集群扩展插件。
+`hermes-agent-cluster` 是 Hermes 的分布式集群扩展插件。
 
 它允许多台设备上的独立 Hermes 实例进行协同工作，实现：
 
@@ -637,7 +637,7 @@ Remote Process Management
 
 # 20. 总结
 
-`hermes-kanban-remote` 将 Hermes 从：
+`hermes-agent-cluster` 将 Hermes 从：
 
 ```text id="jlwmj2"
 单机 Kanban Runtime
