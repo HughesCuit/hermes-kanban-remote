@@ -73,6 +73,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/nodes/join", s.handleJoin)
 		r.Post("/nodes/heartbeat", s.handleHeartbeat)
 		r.Get("/nodes", s.handleListNodes)
+		r.Patch("/nodes/{id}/capabilities", s.handleUpdateCapabilities)
 
 		// Task management
 		r.Post("/tasks", s.handleSubmitTask)
@@ -176,6 +177,34 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	nodes := s.Registry.GetAll()
 	writeJSON(w, nodes)
+}
+
+type updateCapabilitiesRequest struct {
+	Capabilities []string `json:"capabilities"`
+}
+
+func (s *Server) handleUpdateCapabilities(w http.ResponseWriter, r *http.Request) {
+	limitBody(w, r)
+	nodeID := chi.URLParam(r, "id")
+	var req updateCapabilitiesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	// Verify node exists
+	if _, ok := s.Registry.Get(nodeID); !ok {
+		http.Error(w, "node not found", http.StatusNotFound)
+		return
+	}
+	s.Registry.UpdateCapabilities(nodeID, req.Capabilities)
+	// Re-trigger scheduling: capability changes may unlock pending tasks
+	s.Scheduler.TriggerPendingTasks()
+	s.Scheduler.SchedulePending()
+	writeJSON(w, map[string]interface{}{
+		"node_id":      nodeID,
+		"capabilities": req.Capabilities,
+		"status":       "updated",
+	})
 }
 
 // --- Task handlers ---

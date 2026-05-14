@@ -29,6 +29,7 @@ type Registry struct {
 	mu            sync.RWMutex
 	nodes         map[string]*Node
 	onNodeOnline  func(nodeID string)
+	onCapabilityChange func(nodeID string, oldCaps, newCaps []string)
 }
 
 // NewRegistry creates a new node registry.
@@ -41,6 +42,13 @@ func (r *Registry) SetOnNodeOnline(fn func(nodeID string)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.onNodeOnline = fn
+}
+
+// SetOnCapabilityChange registers a callback for when a node's capabilities change.
+func (r *Registry) SetOnCapabilityChange(fn func(nodeID string, oldCaps, newCaps []string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onCapabilityChange = fn
 }
 
 // Register adds or updates a node.
@@ -87,6 +95,43 @@ func (r *Registry) GetAll() []*Node {
 		result = append(result, &cp)
 	}
 	return result
+}
+
+// UpdateCapabilities updates a node's capabilities and fires the callback if changed.
+func (r *Registry) UpdateCapabilities(id string, capabilities []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n, ok := r.nodes[id]
+	if !ok {
+		return
+	}
+	oldCaps := n.Capabilities
+	// Compare sets to avoid spurious callbacks
+	if capsEqual(oldCaps, capabilities) {
+		return
+	}
+	n.Capabilities = make([]string, len(capabilities))
+	copy(n.Capabilities, capabilities)
+	if r.onCapabilityChange != nil {
+		go r.onCapabilityChange(id, oldCaps, capabilities)
+	}
+}
+
+// capsEqual returns true if two string slices contain the same elements (as sets).
+func capsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]bool, len(a))
+	for _, s := range a {
+		set[s] = true
+	}
+	for _, s := range b {
+		if !set[s] {
+			return false
+		}
+	}
+	return true
 }
 
 // UpdateStatus sets the status of a node.

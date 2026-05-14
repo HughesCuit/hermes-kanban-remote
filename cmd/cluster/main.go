@@ -72,6 +72,16 @@ func main() {
 		}
 	})
 
+	// --- Capability change: re-evaluate pending tasks ---
+	registry.SetOnCapabilityChange(func(nodeID string, oldCaps, newCaps []string) {
+		log.Printf("capability change: node=%s old=%v new=%v", nodeID, oldCaps, newCaps)
+		promoted := sched.TriggerPendingTasks()
+		if len(promoted) > 0 {
+			log.Printf("capability-change trigger: promoted %d pending tasks for node %s", len(promoted), nodeID)
+			sched.SchedulePending()
+		}
+	})
+
 	// --- Recovery: Detector -> Revoker -> Rescheduler ---
 	revoker := recovery.NewRevoker(leaseMgr, recLog)
 	rescheduler := recovery.NewRescheduler(sched, recLog)

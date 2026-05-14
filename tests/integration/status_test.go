@@ -229,3 +229,69 @@ func TestStatus_FilterByNode(t *testing.T) {
 		t.Errorf("expected 0 entries for nonexistent node, got %d", len(result.Entries))
 	}
 }
+
+func TestStatus_FilterByCapability(t *testing.T) {
+	ts := setupStatusServer(t)
+	defer ts.Close()
+
+	// Register a node with "gpu" capability
+	joinResp, err := http.Post(ts.URL+"/api/v1/nodes/join", "application/json",
+		strings.NewReader(`{"node_name":"gpu-worker","capabilities":["gpu","cuda"]}`))
+	if err != nil {
+		t.Fatalf("join node failed: %v", err)
+	}
+	joinResp.Body.Close()
+
+	// Submit a task requiring "gpu" — should be auto-scheduled to the gpu node
+	submitResp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json",
+		strings.NewReader(`{"title":"gpu task","requires":["gpu"]}`))
+	if err != nil {
+		t.Fatalf("submit task failed: %v", err)
+	}
+	submitResp.Body.Close()
+
+	// Filter by capability "gpu" — should return 1 entry (the assigned gpu task)
+	resp, err := http.Get(ts.URL + "/api/v1/status?capability=gpu")
+	if err != nil {
+		t.Fatalf("GET /status failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Entries []struct {
+			TaskID       string   `json:"task_id"`
+			TaskTitle    string   `json:"task_title"`
+			NodeID       string   `json:"node_id"`
+			Capabilities []string `json:"capabilities"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if len(result.Entries) != 1 {
+		t.Fatalf("expected 1 entry for capability=gpu, got %d", len(result.Entries))
+	}
+	if result.Entries[0].TaskTitle != "gpu task" {
+		t.Errorf("expected title 'gpu task', got %q", result.Entries[0].TaskTitle)
+	}
+	if result.Entries[0].NodeID != "node_gpu-worker" {
+		t.Errorf("expected node 'node_gpu-worker', got %q", result.Entries[0].NodeID)
+	}
+
+	// Filter by capability "cpu" — should return 0 (no node has cpu)
+	resp2, err := http.Get(ts.URL + "/api/v1/status?capability=cpu")
+	if err != nil {
+		t.Fatalf("GET /status failed: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	var cpuResult struct {
+		Entries []interface{} `json:"entries"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&cpuResult); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if len(cpuResult.Entries) != 0 {
+		t.Errorf("expected 0 entries for capability=cpu, got %d", len(cpuResult.Entries))
+	}
+}
