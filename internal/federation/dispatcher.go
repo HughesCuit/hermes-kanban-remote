@@ -84,7 +84,7 @@ func (d *Dispatcher) ForwardTask(clusterID, title string, requires []string) (st
 }
 
 // QueryClusterStatus queries the status of a remote cluster.
-func (d *Dispatcher) QueryClusterStatus(clusterID string) (*RemoteStatusResponse, error) {
+func (d *Dispatcher) QueryClusterStatus(clusterID string) (*StatusResponse, error) {
 	cluster, ok := d.registry.Get(clusterID)
 	if !ok {
 		return nil, ErrClusterNotFound

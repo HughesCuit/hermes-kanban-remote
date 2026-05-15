@@ -161,31 +161,110 @@ func (c *ServerConfig) BindAddress() string {
 	return fmt.Sprintf("%s:%d", c.Bind, c.Port)
 }
 
+// ValidationError holds detailed validation information for a single field.
+type ValidationError struct {
+	Field      string
+	Message    string
+	Suggestion string
+}
+
+// Error implements the error interface.
+func (ve ValidationError) Error() string {
+	s := fmt.Sprintf("%s: %s", ve.Field, ve.Message)
+	if ve.Suggestion != "" {
+		s += fmt.Sprintf("\n  suggestion: %s", ve.Suggestion)
+	}
+	return s
+}
+
 // Validate checks required fields.
 func (c *Config) Validate() error {
 	if c.Cluster.ID == "" {
-		return fmt.Errorf("cluster.id is required")
+		return fmt.Errorf("cluster.id is required (set cluster.id in your config file, e.g. cluster.id: my-cluster)")
 	}
 	if c.Node.ID == "" {
-		return fmt.Errorf("node.id is required")
+		return fmt.Errorf("node.id is required (set node.id in your config file, e.g. node.id: my-node)")
 	}
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
-		return fmt.Errorf("server.port must be 1-65535, got %d", c.Server.Port)
+		return fmt.Errorf("server.port must be 1-65535, got %d (use a valid port like 8787)", c.Server.Port)
 	}
 	role := c.Cluster.Role
 	if role != "main" && role != "worker" {
-		return fmt.Errorf("cluster.role must be 'main' or 'worker', got '%s'", role)
+		return fmt.Errorf("cluster.role must be 'main' or 'worker', got '%s' (set cluster.role to 'main' or 'worker')", role)
 	}
 	if role == "worker" && c.Cluster.Endpoint == "" {
-		return fmt.Errorf("cluster.endpoint is required for worker nodes")
+		return fmt.Errorf("cluster.endpoint is required for worker nodes (set cluster.endpoint to the main node URL, e.g. cluster.endpoint: http://main:8787)")
 	}
 	if c.TLS.Enabled {
 		if c.TLS.CertFile == "" {
-			return fmt.Errorf("tls.cert_file is required when tls is enabled")
+			return fmt.Errorf("tls.cert_file is required when tls is enabled (set tls.cert_file to your certificate path)")
 		}
 		if c.TLS.KeyFile == "" {
-			return fmt.Errorf("tls.key_file is required when tls is enabled")
+			return fmt.Errorf("tls.key_file is required when tls is enabled (set tls.key_file to your private key path)")
 		}
+	}
+	return nil
+}
+
+// ValidateDetailed checks all config fields and returns all validation errors
+// with field names, messages, and suggestions. Returns nil if config is valid.
+func (c *Config) ValidateDetailed() []ValidationError {
+	var errs []ValidationError
+
+	if c.Cluster.ID == "" {
+		errs = append(errs, ValidationError{
+			Field:      "cluster.id",
+			Message:    "cluster ID is required",
+			Suggestion: "set cluster.id in your config file (e.g. cluster.id: my-cluster)",
+		})
+	}
+	if c.Node.ID == "" {
+		errs = append(errs, ValidationError{
+			Field:      "node.id",
+			Message:    "node ID is required",
+			Suggestion: "set node.id in your config file (e.g. node.id: my-node)",
+		})
+	}
+	if c.Server.Port <= 0 || c.Server.Port > 65535 {
+		errs = append(errs, ValidationError{
+			Field:      "server.port",
+			Message:    fmt.Sprintf("port must be 1-65535, got %d", c.Server.Port),
+			Suggestion: "use a valid port number (e.g. server.port: 8787)",
+		})
+	}
+	role := c.Cluster.Role
+	if role != "main" && role != "worker" {
+		errs = append(errs, ValidationError{
+			Field:      "cluster.role",
+			Message:    fmt.Sprintf("must be 'main' or 'worker', got '%s'", role),
+			Suggestion: "set cluster.role to 'main' for the primary node or 'worker' for secondary nodes",
+		})
+	}
+	if role == "worker" && c.Cluster.Endpoint == "" {
+		errs = append(errs, ValidationError{
+			Field:      "cluster.endpoint",
+			Message:    "endpoint is required for worker nodes",
+			Suggestion: "set cluster.endpoint to the main node URL (e.g. cluster.endpoint: http://main:8787)",
+		})
+	}
+	if c.TLS.Enabled {
+		if c.TLS.CertFile == "" {
+			errs = append(errs, ValidationError{
+				Field:      "tls.cert_file",
+				Message:    "certificate file is required when TLS is enabled",
+				Suggestion: "set tls.cert_file to your TLS certificate path",
+			})
+		}
+		if c.TLS.KeyFile == "" {
+			errs = append(errs, ValidationError{
+				Field:      "tls.key_file",
+				Message:    "private key file is required when TLS is enabled",
+				Suggestion: "set tls.key_file to your TLS private key path",
+			})
+		}
+	}
+	if len(errs) > 0 {
+		return errs
 	}
 	return nil
 }

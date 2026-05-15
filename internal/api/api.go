@@ -47,6 +47,10 @@ type Server struct {
 	Federation  *federation.Dispatcher
 	FedRegistry *federation.Registry
 	HookManager *hooks.Manager
+	startedAt   time.Time
+	ClusterID   string
+	NodeID      string
+	NodeRole    string
 }
 
 // ServerOption configures optional Server fields.
@@ -80,6 +84,15 @@ func WithFederation(d *federation.Dispatcher, r *federation.Registry) ServerOpti
 	}
 }
 
+// WithClusterInfo sets the cluster ID, node ID, and node role for the server.
+func WithClusterInfo(clusterID, nodeID, role string) ServerOption {
+	return func(s *Server) {
+		s.ClusterID = clusterID
+		s.NodeID = nodeID
+		s.NodeRole = role
+	}
+}
+
 // NewServer creates a new API server.
 func NewServer(
 	registry *cluster.Registry,
@@ -106,6 +119,7 @@ func NewServer(
 		LeaderSync: leaderSync,
 		StatusView: sv,
 		Resolver:   resolver,
+		startedAt:  time.Now(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -124,6 +138,9 @@ func NewServer(
 }
 
 func (s *Server) setupRoutes() {
+	// Health endpoint (outside /api/v1 for availability checks)
+	s.Router.Get("/health", s.handleHealth)
+
 	s.Router.Route("/api/v1", func(r chi.Router) {
 		// Node management
 		r.Post("/nodes/join", s.handleJoin)
@@ -184,6 +201,9 @@ func (s *Server) setupRoutes() {
 		r.Delete("/hooks/{id}", s.handleDeregisterHook)
 		r.Get("/hooks", s.handleListHooks)
 		r.Get("/hooks/{id}/deliveries", s.handleHookDeliveries)
+
+		// Summary
+		r.Get("/summary", s.handleSummary)
 	})
 
 	// Prometheus metrics endpoint (outside /api/v1 to avoid auth middleware)
@@ -914,4 +934,53 @@ func (s *Server) handleHookDeliveries(w http.ResponseWriter, r *http.Request) {
 	hookID := chi.URLParam(r, "id")
 	deliveries := s.HookManager.GetDeliveries(hookID)
 	writeJSON(w, deliveries)
+}
+
+// --- Health & Summary handlers ---
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]interface{}{
+		"status":        "ok",
+		"cluster_id":    s.ClusterID,
+		"node_id":       s.NodeID,
+		"role":          s.NodeRole,
+		"uptime_seconds": int(time.Since(s.startedAt).Seconds()),
+	})
+}
+
+func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
+	tasks := s.Scheduler.GetTaskStore().GetAll()
+	taskCounts := map[string]int{
+		"total":     len(tasks),
+		"ready":     0,
+		"running":   0,
+		"completed": 0,
+		"failed":    0,
+		"pending":   0,
+	}
+	for _, t := range tasks {
+		switch t.Status {
+		case scheduler.TaskReady:
+			taskCounts["ready"]++
+		case scheduler.TaskRunning:
+			taskCounts["running"]++
+		case scheduler.TaskCompleted:
+			taskCounts["completed"]++
+		case scheduler.TaskFailed:
+			taskCounts["failed"]++
+		case scheduler.TaskPending:
+			taskCounts["pending"]++
+		}
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"cluster_id":    s.ClusterID,
+		"node_id":       s.NodeID,
+		"role":          s.NodeRole,
+		"nodes":         map[string]int{"total": s.Registry.Count(), "online": s.Registry.OnlineCount()},
+		"tasks":         taskCounts,
+		"leases":        map[string]int{"active": len(s.LeaseMgr.GetActiveLeases())},
+		"sync_version":  s.StateStore.Version(),
+		"uptime_seconds": int(time.Since(s.startedAt).Seconds()),
+	})
 }

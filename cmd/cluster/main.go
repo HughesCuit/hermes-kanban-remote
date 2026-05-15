@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,9 +31,81 @@ import (
 )
 
 func main() {
-	// --- CLI flags ---
-	configPath := flag.String("config", "cluster.yaml", "path to cluster.yaml config file")
-	flag.Parse()
+	// Remove "cluster" binary name if present as first arg
+	args := os.Args[1:]
+
+	// Detect subcommand
+	if len(args) > 0 {
+		cmd := args[0]
+		switch cmd {
+		case "help", "--help", "-h":
+			printUsage()
+			return
+		case "status":
+			cmdStatus(args[1:])
+			return
+		case "health":
+			cmdHealth(args[1:])
+			return
+		case "config":
+			if len(args) > 1 {
+				switch args[1] {
+				case "init":
+					cmdConfigInit(args[2:])
+					return
+				case "validate":
+					cmdConfigValidate(args[2:])
+					return
+				default:
+					fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n\n", args[1])
+					printUsage()
+					os.Exit(1)
+				}
+			}
+			fmt.Fprintln(os.Stderr, "config requires a subcommand: init or validate")
+			printUsage()
+			os.Exit(1)
+		case "serve":
+			cmdServe(args[1:])
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
+			printUsage()
+			os.Exit(1)
+		}
+	}
+
+	// No subcommand → default to serve
+	cmdServe(nil)
+}
+
+// printUsage displays CLI usage information.
+func printUsage() {
+	fmt.Println("hermes-agent-cluster — distributed cluster manager")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  cluster [command]")
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  serve              Start the cluster server (default)")
+	fmt.Println("  status             Show cluster status from a running node")
+	fmt.Println("  health             Check health of a running node")
+	fmt.Println("  config init        Generate a default config file")
+	fmt.Println("  config validate    Validate a config file")
+	fmt.Println("  help               Show this help message")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  --config    Path to config file (default: cluster.yaml)")
+	fmt.Println("  --url       API server URL (default: http://localhost:8787)")
+	fmt.Println("  --output    Output file path (for config init)")
+}
+
+// --- cmdServe starts the cluster server (original main() logic) ---
+
+func cmdServe(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	configPath := fs.String("config", "cluster.yaml", "path to cluster.yaml config file")
+	fs.Parse(args)
 
 	// --- Load config ---
 	cfg, err := config.Load(*configPath)
@@ -243,6 +318,7 @@ func main() {
 		api.WithPromMetrics(promMetrics),
 		api.WithHookManager(hookMgr),
 		api.WithFederation(fedDispatcher, fedRegistry),
+		api.WithClusterInfo(cfg.Cluster.ID, cfg.Node.ID, cfg.Cluster.Role),
 	)
 
 	// --- Start background services ---
@@ -312,6 +388,177 @@ func main() {
 	}
 
 	log.Println("server stopped")
+}
+
+// --- cmdStatus fetches cluster status from a running node ---
+
+func cmdStatus(args []string) {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	url := fs.String("url", "http://localhost:8787", "API server URL")
+	fs.Parse(args)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// Fetch health
+	healthResp, healthErr := client.Get(*url + "/health")
+	healthData := make(map[string]interface{})
+	if healthErr != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot reach cluster at %s: %v\n", *url, healthErr)
+		os.Exit(1)
+	}
+	defer healthResp.Body.Close()
+	json.NewDecoder(healthResp.Body).Decode(&healthData)
+
+	// Fetch summary
+	summaryResp, summaryErr := client.Get(*url + "/api/v1/summary")
+	summaryData := make(map[string]interface{})
+	if summaryErr != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot fetch summary: %v\n", summaryErr)
+		os.Exit(1)
+	}
+	defer summaryResp.Body.Close()
+	json.NewDecoder(summaryResp.Body).Decode(&summaryData)
+
+	// Format output
+	fmt.Println()
+	if clusterID, ok := summaryData["cluster_id"].(string); ok {
+		role := ""
+		if r, ok := summaryData["role"].(string); ok {
+			role = r
+		}
+		if nodeID, ok := summaryData["node_id"].(string); ok {
+			fmt.Printf("Cluster: %s (role: %s)\n", clusterID, role)
+			fmt.Printf("Node:    %s\n", nodeID)
+		} else {
+			fmt.Printf("Cluster: %s (role: %s)\n", clusterID, role)
+		}
+	}
+
+	// Uptime
+	if uptime, ok := healthData["uptime"].(string); ok {
+		fmt.Printf("Uptime:  %s\n", uptime)
+	} else if started, ok := healthData["started"].(string); ok {
+		fmt.Printf("Started: %s\n", started)
+	}
+	fmt.Println()
+
+	// Nodes
+	if nodes, ok := summaryData["nodes"].(map[string]interface{}); ok {
+		totalNodes, _ := nodes["total"].(float64)
+		onlineNodes, _ := nodes["online"].(float64)
+		fmt.Printf("Nodes:   %d total, %d online\n", int(totalNodes), int(onlineNodes))
+	}
+
+	// Tasks
+	if tasks, ok := summaryData["tasks"].(map[string]interface{}); ok {
+		totalTasks, _ := tasks["total"].(float64)
+		parts := []string{}
+		for _, status := range []string{"ready", "running", "completed", "failed", "pending"} {
+			if c, ok := tasks[status].(float64); ok && c > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", int(c), status))
+			}
+		}
+		if len(parts) > 0 {
+			fmt.Printf("Tasks:   %d total (%s)\n", int(totalTasks), strings.Join(parts, ", "))
+		} else {
+			fmt.Printf("Tasks:   %d total\n", int(totalTasks))
+		}
+	}
+
+	// Leases
+	if leases, ok := summaryData["leases"].(map[string]interface{}); ok {
+		if activeLeases, ok := leases["active"].(float64); ok {
+			fmt.Printf("Leases:  %d active\n", int(activeLeases))
+		}
+	}
+
+	// Sync version
+	if syncVersion, ok := summaryData["sync_version"].(float64); ok {
+		fmt.Printf("Sync:    v%d\n", int(syncVersion))
+	}
+
+	fmt.Println()
+}
+
+// --- cmdHealth checks health of a running node ---
+
+func cmdHealth(args []string) {
+	fs := flag.NewFlagSet("health", flag.ExitOnError)
+	url := fs.String("url", "http://localhost:8787", "API server URL")
+	fs.Parse(args)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(*url + "/health")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot reach %s: %v\n", *url, err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusOK {
+		fmt.Printf("OK (HTTP %d) — %s\n", resp.StatusCode, *url)
+		// Pretty-print JSON if present
+		var data map[string]interface{}
+		if json.Unmarshal(body, &data) == nil {
+			for k, v := range data {
+				fmt.Printf("  %s: %v\n", k, v)
+			}
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "FAIL (HTTP %d) — %s\n", resp.StatusCode, *url)
+		os.Exit(1)
+	}
+}
+
+// --- cmdConfigInit generates a default config file ---
+
+func cmdConfigInit(args []string) {
+	fs := flag.NewFlagSet("config init", flag.ExitOnError)
+	output := fs.String("output", "cluster.yaml", "output file path")
+	fs.Parse(args)
+
+	cfg := config.DefaultConfig()
+	if err := config.Save(cfg, *output); err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot write config: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Default config written to %s\n", *output)
+	fmt.Println("Edit the file to customize your cluster settings.")
+}
+
+// --- cmdConfigValidate validates a config file ---
+
+func cmdConfigValidate(args []string) {
+	fs := flag.NewFlagSet("config validate", flag.ExitOnError)
+	configPath := fs.String("config", "cluster.yaml", "path to config file")
+	fs.Parse(args)
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	errs := cfg.ValidateDetailed()
+	if len(errs) == 0 {
+		fmt.Printf("Config %s: OK\n", *configPath)
+		fmt.Printf("  cluster.id: %s\n", cfg.Cluster.ID)
+		fmt.Printf("  node.id:    %s\n", cfg.Node.ID)
+		fmt.Printf("  server:     %s\n", cfg.Server.BindAddress())
+		fmt.Printf("  role:       %s\n", cfg.Cluster.Role)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "Config %s: %d error(s)\n\n", *configPath, len(errs))
+	for i, e := range errs {
+		fmt.Fprintf(os.Stderr, "  %d. [%s] %s\n", i+1, e.Field, e.Message)
+		if e.Suggestion != "" {
+			fmt.Fprintf(os.Stderr, "     suggestion: %s\n", e.Suggestion)
+		}
+	}
+	fmt.Println()
+	os.Exit(1)
 }
 
 // --- Sync Push Loop
