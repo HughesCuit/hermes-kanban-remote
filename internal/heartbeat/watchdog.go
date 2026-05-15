@@ -21,6 +21,7 @@ type Watchdog struct {
 	running          bool
 	stopCh           chan struct{}
 	registry         HeartbeatRegistry
+	intervalUpdated  bool // flag set when interval changes while running
 }
 
 // HeartbeatRegistry is the interface the watchdog needs from the cluster registry.
@@ -68,6 +69,17 @@ func (w *Watchdog) Start() {
 			select {
 			case <-ticker.C:
 				w.check()
+				// Check if interval was updated; recreate ticker if so
+				w.mu.Lock()
+				if w.intervalUpdated {
+					w.intervalUpdated = false
+					interval := w.interval
+					w.mu.Unlock()
+					ticker.Stop()
+					ticker = time.NewTicker(interval)
+				} else {
+					w.mu.Unlock()
+				}
 			case <-w.stopCh:
 				return
 			}
@@ -84,6 +96,18 @@ func (w *Watchdog) Stop() {
 	}
 	w.running = false
 	close(w.stopCh)
+}
+
+// UpdateIntervals dynamically changes the watchdog timing parameters.
+func (w *Watchdog) UpdateIntervals(checkInterval, degradedAfter, offlineAfter time.Duration) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.running {
+		w.intervalUpdated = true
+	}
+	w.interval = checkInterval
+	w.degradedAfter = degradedAfter
+	w.offlineAfter = offlineAfter
 }
 
 func (w *Watchdog) check() {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -107,6 +108,31 @@ func main() {
 	rescheduler := recovery.NewRescheduler(sched, recLog)
 	detector := recovery.NewDetector(revoker, rescheduler, leaseMgr, recLog)
 
+	// --- Auto-reconnect manager (for WAN cluster) ---
+	var reconnectMgr *recovery.ReconnectManager
+	reconnectMgr = recovery.NewReconnectManager(
+		recovery.ReconnectConfig{
+			InitialInterval: cfg.Reconnect.InitialInterval,
+			MaxInterval:     cfg.Reconnect.MaxInterval,
+			Multiplier:      cfg.Reconnect.Multiplier,
+		},
+		func(target string) error {
+			log.Printf("reconnect attempt: target=%s", target)
+			client := &http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Get(target + "/api/v1/sync/status")
+			if err != nil {
+				return err
+			}
+			resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				log.Printf("reconnect succeeded: target=%s", target)
+				reconnectMgr.NotifyConnect(target)
+				return nil
+			}
+			return fmt.Errorf("health check returned HTTP %d", resp.StatusCode)
+		},
+	)
+
 	// --- Registry adapter for heartbeat watchdog ---
 	adapter := &cluster.RegistryAdapter{Reg: registry}
 
@@ -200,6 +226,10 @@ func main() {
 	// Start recovery detector
 	detector.Start()
 
+	// Start reconnect manager
+	reconnectMgr.Start()
+	defer reconnectMgr.Stop()
+
 	// If this is a leader node, start sync push loop
 	if cfg.Cluster.Role == "main" {
 		go syncPushLoop(leaderSync, taskStore, cfg.Node.ID, stopCh)
@@ -217,11 +247,18 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in goroutine
+	// Start server in goroutine (TLS or plain HTTP)
 	go func() {
-		log.Printf("API listening on %s", addr)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server error: %v", err)
+		if cfg.TLS.Enabled {
+			log.Printf("API listening on %s (TLS)", addr)
+			if err := httpServer.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("server error: %v", err)
+			}
+		} else {
+			log.Printf("API listening on %s", addr)
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("server error: %v", err)
+			}
 		}
 	}()
 
@@ -253,7 +290,7 @@ func syncPushLoop(ls *sync.LeaderSync, store *scheduler.TaskStore, senderNode st
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	var lastVersion int64
+	lastVersion := make(map[string]int64) // per-task last pushed version
 
 	for {
 		select {
@@ -261,7 +298,7 @@ func syncPushLoop(ls *sync.LeaderSync, store *scheduler.TaskStore, senderNode st
 			// Push any tasks with version > lastVersion
 			tasks := store.GetAll()
 			for _, t := range tasks {
-				if t.Version > lastVersion {
+				if t.Version > lastVersion[t.ID] {
 					ls.PushTaskState(sync.TaskSync{
 						TaskID:     t.ID,
 						Title:      t.Title,
@@ -269,17 +306,8 @@ func syncPushLoop(ls *sync.LeaderSync, store *scheduler.TaskStore, senderNode st
 						AssignedTo: t.AssignedTo,
 						Version:    t.Version,
 					}, sync.EventTaskCreated, senderNode)
+					lastVersion[t.ID] = t.Version
 				}
-			}
-			// Update last seen version with explicit max scan
-			var maxVersion int64
-			for _, t := range tasks {
-				if t.Version > maxVersion {
-					maxVersion = t.Version
-				}
-			}
-			if maxVersion > lastVersion {
-				lastVersion = maxVersion
 			}
 		case <-stopCh:
 			return

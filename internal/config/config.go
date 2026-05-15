@@ -16,7 +16,30 @@ type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Lease     LeaseConfig     `yaml:"lease"`
 	Watchdog  WatchdogConfig  `yaml:"watchdog"`
+	TLS       TLSConfig       `yaml:"tls"`
+	Heartbeat HeartbeatConfig `yaml:"heartbeat"`
+	Reconnect ReconnectConfig `yaml:"reconnect"`
 	Telemetry telemetry.Config `yaml:"telemetry"`
+}
+
+// TLSConfig holds TLS settings for the API server.
+type TLSConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+}
+
+// HeartbeatConfig holds heartbeat timing parameters.
+type HeartbeatConfig struct {
+	Interval     time.Duration `yaml:"interval"`
+	LeaseTimeout time.Duration `yaml:"lease_timeout"`
+}
+
+// ReconnectConfig holds auto-reconnect backoff parameters.
+type ReconnectConfig struct {
+	InitialInterval time.Duration `yaml:"initial_interval"`
+	MaxInterval     time.Duration `yaml:"max_interval"`
+	Multiplier      float64       `yaml:"multiplier"`
 }
 
 // ClusterConfig holds cluster-wide settings.
@@ -77,6 +100,18 @@ func DefaultConfig() *Config {
 			DegradedAfter:  15 * time.Second,
 			OfflineAfter:   30 * time.Second,
 		},
+		TLS: TLSConfig{
+			Enabled: false,
+		},
+		Heartbeat: HeartbeatConfig{
+			Interval:     30 * time.Second,
+			LeaseTimeout: 120 * time.Second,
+		},
+		Reconnect: ReconnectConfig{
+			InitialInterval: 1 * time.Second,
+			MaxInterval:     60 * time.Second,
+			Multiplier:      2.0,
+		},
 		Telemetry: telemetry.DefaultConfig(),
 	}
 }
@@ -132,6 +167,14 @@ func (c *Config) Validate() error {
 	}
 	if role == "worker" && c.Cluster.Endpoint == "" {
 		return fmt.Errorf("cluster.endpoint is required for worker nodes")
+	}
+	if c.TLS.Enabled {
+		if c.TLS.CertFile == "" {
+			return fmt.Errorf("tls.cert_file is required when tls is enabled")
+		}
+		if c.TLS.KeyFile == "" {
+			return fmt.Errorf("tls.key_file is required when tls is enabled")
+		}
 	}
 	return nil
 }

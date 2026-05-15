@@ -40,7 +40,9 @@ func (s *StateStore) Apply(msg SyncMessage) bool {
 		AssignedTo: ts.AssignedTo,
 		Version:    ts.Version,
 	}
-	s.version = ts.Version
+	if ts.Version > s.version {
+		s.version = ts.Version
+	}
 	return true
 }
 
@@ -73,4 +75,35 @@ func (s *StateStore) Version() int64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.version
+}
+
+// ApplyBatch applies multiple sync messages atomically.
+// Returns the number of messages that were actually applied (non-stale).
+func (s *StateStore) ApplyBatch(msgs []SyncMessage) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	applied := 0
+	for _, msg := range msgs {
+		if msg.TaskState == nil {
+			continue
+		}
+		ts := msg.TaskState
+		existing, ok := s.tasks[ts.TaskID]
+		if ok && existing.Version >= ts.Version {
+			continue // stale
+		}
+		s.tasks[ts.TaskID] = &TaskSync{
+			TaskID:     ts.TaskID,
+			Title:      ts.Title,
+			Status:     ts.Status,
+			AssignedTo: ts.AssignedTo,
+			Version:    ts.Version,
+		}
+		if ts.Version > s.version {
+			s.version = ts.Version
+		}
+		applied++
+	}
+	return applied
 }

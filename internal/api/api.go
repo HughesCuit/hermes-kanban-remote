@@ -128,6 +128,7 @@ func (s *Server) setupRoutes() {
 
 		// Sync
 		r.Post("/sync/receive", s.handleSyncReceive)
+		r.Post("/sync/receive-batch", s.handleSyncReceiveBatch)
 		r.Get("/sync/status", s.handleSyncStatus)
 
 		// Recovery
@@ -453,6 +454,20 @@ func (s *Server) handleSyncReceive(w http.ResponseWriter, r *http.Request) {
 	s.updateSyncGauge()
 }
 
+func (s *Server) handleSyncReceiveBatch(w http.ResponseWriter, r *http.Request) {
+	limitBody(w, r)
+	var batch sync.BatchSyncMessage
+	if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	applied := s.Receiver.HandleBatchSyncMessage(batch)
+	writeJSON(w, map[string]int{"applied": applied})
+
+	// Prometheus: update sync version gauge
+	s.updateSyncGauge()
+}
+
 func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int64{"version": s.StateStore.Version()})
 }
@@ -621,6 +636,16 @@ func (s *Server) handleClusterViz(w http.ResponseWriter, r *http.Request) {
 // ListenAndServe starts the server on the given address.
 func (s *Server) ListenAndServe(addr string) error {
 	return http.ListenAndServe(addr, s.Router)
+}
+
+// Start starts the HTTP server (alias for ListenAndServe).
+func (s *Server) Start(addr string) error {
+	return s.ListenAndServe(addr)
+}
+
+// StartTLS starts the HTTPS server with the given TLS certificate and key files.
+func (s *Server) StartTLS(addr, certFile, keyFile string) error {
+	return http.ListenAndServeTLS(addr, certFile, keyFile, s.Router)
 }
 
 // --- Metrics helpers ---
