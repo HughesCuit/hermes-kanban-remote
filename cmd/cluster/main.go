@@ -15,9 +15,12 @@ import (
 	"github.com/heventure/hermes-agent-cluster/internal/config"
 	"github.com/heventure/hermes-agent-cluster/internal/heartbeat"
 	"github.com/heventure/hermes-agent-cluster/internal/lease"
+	"github.com/heventure/hermes-agent-cluster/internal/metrics"
 	"github.com/heventure/hermes-agent-cluster/internal/recovery"
 	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
 	"github.com/heventure/hermes-agent-cluster/internal/sync"
+	"github.com/heventure/hermes-agent-cluster/internal/telemetry"
+	"github.com/heventure/hermes-agent-cluster/internal/visualization"
 	"github.com/heventure/hermes-agent-cluster/internal/workflow"
 )
 
@@ -37,6 +40,23 @@ func main() {
 
 	log.Printf("starting hermes-agent-cluster | cluster=%s role=%s node=%s",
 		cfg.Cluster.ID, cfg.Cluster.Role, cfg.Node.ID)
+
+	// --- Initialize telemetry ---
+	ctx := context.Background()
+	otelProvider, err := telemetry.Init(ctx, cfg.Telemetry)
+	if err != nil {
+		log.Fatalf("init telemetry: %v", err)
+	}
+	defer otelProvider.Shutdown(ctx)
+
+	var metricsTelemetry *telemetry.Metrics
+	if cfg.Telemetry.IsEnabled() {
+		metricsTelemetry, err = telemetry.NewMetrics()
+		if err != nil {
+			log.Fatalf("init metrics: %v", err)
+		}
+		log.Printf("telemetry enabled: exporter=%s endpoint=%s", cfg.Telemetry.Exporter, cfg.Telemetry.Endpoint)
+	}
 
 	// --- Initialize core components ---
 	registry := cluster.NewRegistry()
@@ -112,6 +132,13 @@ func main() {
 		detector.NotifyOffline(nodeID)
 	})
 
+	// --- Cluster visualization ---
+	clusterView := visualization.NewClusterView(registry, taskStore, leaseMgr, recLog, resolver)
+
+	// --- Prometheus metrics (always enabled, scraped at /metrics) ---
+	promMetrics := metrics.New()
+	log.Printf("prometheus metrics registered at /metrics")
+
 	// --- Build API server ---
 	server := api.NewServer(
 		registry,
@@ -123,6 +150,9 @@ func main() {
 		receiver,
 		leaderSync,
 		resolver,
+		api.WithClusterView(clusterView),
+		api.WithTelemetry(metricsTelemetry),
+		api.WithPromMetrics(promMetrics),
 	)
 
 	// --- Start background services ---

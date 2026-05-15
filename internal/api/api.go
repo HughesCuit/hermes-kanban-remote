@@ -9,10 +9,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/heventure/hermes-agent-cluster/internal/cluster"
 	"github.com/heventure/hermes-agent-cluster/internal/dashboard"
 	"github.com/heventure/hermes-agent-cluster/internal/lease"
+	"github.com/heventure/hermes-agent-cluster/internal/metrics"
 	"github.com/heventure/hermes-agent-cluster/internal/recovery"
 	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
 	"github.com/heventure/hermes-agent-cluster/internal/status"
@@ -38,7 +40,26 @@ type Server struct {
 	StatusView  *status.StatusView
 	Resolver    *workflow.Resolver
 	ClusterView *visualization.ClusterView
-	Metrics     *telemetry.Metrics
+	Telemetry   *telemetry.Metrics
+	PromMetrics *metrics.Collector
+}
+
+// ServerOption configures optional Server fields.
+type ServerOption func(*Server)
+
+// WithClusterView sets the ClusterView for visualization endpoints.
+func WithClusterView(cv *visualization.ClusterView) ServerOption {
+	return func(s *Server) { s.ClusterView = cv }
+}
+
+// WithTelemetry sets the Telemetry metrics and installs telemetry middleware.
+func WithTelemetry(m *telemetry.Metrics) ServerOption {
+	return func(s *Server) { s.Telemetry = m }
+}
+
+// WithPromMetrics sets the Prometheus metrics collector and installs metrics middleware.
+func WithPromMetrics(c *metrics.Collector) ServerOption {
+	return func(s *Server) { s.PromMetrics = c }
 }
 
 // NewServer creates a new API server.
@@ -52,29 +73,33 @@ func NewServer(
 	receiver *sync.FollowerReceiver,
 	leaderSync *sync.LeaderSync,
 	resolver *workflow.Resolver,
-	clusterView *visualization.ClusterView,
-	metrics *telemetry.Metrics,
+	opts ...ServerOption,
 ) *Server {
 	sv := status.NewStatusView(registry, sched.GetTaskStore(), leaseMgr)
 	s := &Server{
-		Router:      chi.NewRouter(),
-		Registry:    registry,
-		Scheduler:   sched,
-		LeaseMgr:    leaseMgr,
-		Recovery:    detector,
-		Log:         recLog,
-		StateStore:  stateStore,
-		Receiver:    receiver,
-		LeaderSync:  leaderSync,
-		StatusView:  sv,
-		Resolver:    resolver,
-		ClusterView: clusterView,
-		Metrics:     metrics,
+		Router:     chi.NewRouter(),
+		Registry:   registry,
+		Scheduler:  sched,
+		LeaseMgr:   leaseMgr,
+		Recovery:   detector,
+		Log:        recLog,
+		StateStore: stateStore,
+		Receiver:   receiver,
+		LeaderSync: leaderSync,
+		StatusView: sv,
+		Resolver:   resolver,
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	s.Router.Use(middleware.Logger)
 	s.Router.Use(middleware.Recoverer)
-	if metrics != nil {
-		s.Router.Use(telemetry.Middleware(metrics))
+	if s.Telemetry != nil {
+		s.Router.Use(telemetry.Middleware(s.Telemetry))
+	}
+	// Prometheus HTTP request metrics middleware
+	if s.PromMetrics != nil {
+		s.Router.Use(metrics.Middleware(s.PromMetrics))
 	}
 	s.setupRoutes()
 	return s
@@ -128,6 +153,9 @@ func (s *Server) setupRoutes() {
 		r.Get("/cluster/timeline", s.handleClusterTimeline)
 		r.Get("/cluster/viz", s.handleClusterViz)
 	})
+
+	// Prometheus metrics endpoint (outside /api/v1 to avoid auth middleware)
+	s.Router.Handle("/metrics", promhttp.Handler())
 
 	// Serve the Web Dashboard at /dashboard/
 	s.Router.Handle("/dashboard/*", http.StripPrefix("/dashboard/", dashboard.Handler()))
@@ -489,38 +517,58 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 
 // --- Cluster Visualization handlers ---
 
+const maxLimit = 1000
+const defaultLimit = 50
+
+// parseLimit extracts and caps a "limit" query parameter from the request.
+func parseLimit(r *http.Request) int {
+	v := r.URL.Query().Get("limit")
+	if v == "" {
+		return defaultLimit
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return defaultLimit
+	}
+	if n > maxLimit {
+		n = maxLimit
+	}
+	return n
+}
+
 func (s *Server) handleClusterTopology(w http.ResponseWriter, r *http.Request) {
-	topology := s.ClusterView.GetTopology()
-	writeJSON(w, topology)
+	if s.ClusterView == nil {
+		http.Error(w, "cluster visualization not configured", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, s.ClusterView.GetTopology())
 }
 
 func (s *Server) handleClusterMetrics(w http.ResponseWriter, r *http.Request) {
-	metrics := s.ClusterView.GetMetrics()
-	writeJSON(w, metrics)
+	if s.ClusterView == nil {
+		http.Error(w, "cluster visualization not configured", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, s.ClusterView.GetMetrics())
 }
 
 func (s *Server) handleClusterTimeline(w http.ResponseWriter, r *http.Request) {
-	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
+	if s.ClusterView == nil {
+		http.Error(w, "cluster visualization not configured", http.StatusServiceUnavailable)
+		return
 	}
-	timeline := s.ClusterView.GetTimeline(limit)
-	writeJSON(w, timeline)
+	writeJSON(w, s.ClusterView.GetTimeline(parseLimit(r)))
 }
 
 func (s *Server) handleClusterViz(w http.ResponseWriter, r *http.Request) {
-	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
+	if s.ClusterView == nil {
+		http.Error(w, "cluster visualization not configured", http.StatusServiceUnavailable)
+		return
 	}
 	writeJSON(w, map[string]interface{}{
 		"topology": s.ClusterView.GetTopology(),
 		"metrics":  s.ClusterView.GetMetrics(),
-		"timeline": s.ClusterView.GetTimeline(limit),
+		"timeline": s.ClusterView.GetTimeline(parseLimit(r)),
 	})
 }
 
