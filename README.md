@@ -33,8 +33,19 @@
 
 ### 安装
 
+#### 方式一：Hermes 插件安装（推荐）
+
+如果你已经运行 Hermes Agent，一行命令安装：
+
 ```bash
-git clone https://github.com/heventure/hermes-agent-cluster.git
+hermes plugins install HughesCuit/hermes-agent-cluster-plugin
+bash ~/.hermes/plugins/hermes-agent-cluster/install.sh
+```
+
+#### 方式二：从源码构建
+
+```bash
+git clone https://github.com/HughesCuit/hermes-agent-cluster.git
 cd hermes-agent-cluster
 go build -o kanban-cluster ./cmd/cluster
 ```
