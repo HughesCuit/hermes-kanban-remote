@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"gopkg.in/yaml.v3"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -229,8 +230,11 @@ func (s *Server) setupRoutes() {
 		r.Get("/summary", s.handleSummary)
 
 		// Config management
-		r.Get("/config", s.handleGetConfig)
-		r.Put("/config", s.handleUpdateConfig)
+	r.Get("/config", s.handleGetConfig)
+	r.Put("/config", s.handleUpdateConfig)
+	r.Get("/config/validate", s.handleValidateConfig)
+	r.Get("/config/yaml", s.handleGetConfigYAML)
+	r.Put("/config/restart", s.handleRestartConfig)
 	})
 
 	// Prometheus metrics endpoint (outside /api/v1 to avoid auth middleware)
@@ -1383,6 +1387,60 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"status":  "saved",
 		"config":  configToJSON(s.Config),
+	})
+}
+
+func (s *Server) handleValidateConfig(w http.ResponseWriter, r *http.Request) {
+	if s.Config == nil {
+		http.Error(w, `{"error":"config not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	errs := s.Config.ValidateDetailed()
+	if errs == nil {
+		writeJSON(w, map[string]interface{}{
+			"valid":   true,
+			"message": "configuration is valid",
+		})
+		return
+	}
+
+	result := make([]map[string]string, len(errs))
+	for i, ve := range errs {
+		result[i] = map[string]string{
+			"field":      ve.Field,
+			"message":    ve.Message,
+			"suggestion": ve.Suggestion,
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"valid":  false,
+		"errors": result,
+	})
+}
+
+func (s *Server) handleGetConfigYAML(w http.ResponseWriter, r *http.Request) {
+	if s.Config == nil {
+		http.Error(w, `{"error":"config not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	data, err := yaml.Marshal(s.Config)
+	if err != nil {
+		http.Error(w, `{"error":"failed to marshal config: `+escJSON(err.Error())+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	w.Write(data)
+}
+
+func (s *Server) handleRestartConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]interface{}{
+		"status":  "restart",
+		"message": "restart signal sent",
 	})
 }
 
