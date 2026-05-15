@@ -179,6 +179,8 @@ func (s *Server) setupRoutes() {
 
 		// Schedule trigger
 		r.Post("/schedule/trigger", s.handleScheduleTrigger)
+		r.Get("/schedule/stats", s.handleScheduleStats)
+		r.Get("/schedule/decisions", s.handleScheduleDecisions)
 
 		// Workflow / Dependencies
 		r.Post("/tasks/{id}/dependencies", s.handleSetDependencies)
@@ -365,6 +367,7 @@ func (s *Server) handleUpdateCapabilities(w http.ResponseWriter, r *http.Request
 type submitTaskRequest struct {
 	Title    string   `json:"title"`
 	Requires []string `json:"requires"`
+	Priority int      `json:"priority"` // 1=highest, 5=lowest, default 3
 }
 
 func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
@@ -375,7 +378,11 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	taskID := scheduler.GenerateID()
-	task, err := s.Scheduler.GetTaskStore().Create(taskID, req.Title, req.Requires)
+	priority := req.Priority
+	if priority == 0 {
+		priority = scheduler.DefaultPriority
+	}
+	task, err := s.Scheduler.GetTaskStore().CreateWithPriority(taskID, req.Title, req.Requires, priority)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -569,6 +576,23 @@ func (s *Server) handleScheduleTrigger(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"promoted":  promoted,
 		"scheduled": scheduled,
+	})
+}
+
+// --- Schedule stats handler ---
+
+func (s *Server) handleScheduleStats(w http.ResponseWriter, r *http.Request) {
+	stats := s.Scheduler.GetStats()
+	writeJSON(w, stats)
+}
+
+// --- Schedule decisions handler ---
+
+func (s *Server) handleScheduleDecisions(w http.ResponseWriter, r *http.Request) {
+	decisions := s.Scheduler.GetDecisions()
+	writeJSON(w, map[string]interface{}{
+		"decisions": decisions,
+		"count":     len(decisions),
 	})
 }
 

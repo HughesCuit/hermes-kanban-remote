@@ -8,10 +8,13 @@ type NodeInfo struct {
 	Capabilities  []string
 	Load          float64 // 0.0 - 1.0, lower is better
 	HeartbeatAge  float64 // seconds since last heartbeat, lower is better
+	ActiveTasks   int     // number of tasks currently assigned (lower is better)
+	MaxCapacity   int     // max concurrent tasks this node supports (0 = unlimited)
+	AvgCompletion float64 // average task completion time in seconds (lower is better)
 }
 
 // Score computes a composite score for a node relative to task requirements.
-// Weights: capability 0.5, load 0.3, heartbeat 0.2.
+// Weights: capability 0.4, load 0.25, heartbeat 0.15, active-tasks 0.2.
 // Returns -1 if the node doesn't match capabilities; otherwise 0.0 - 1.0 (higher is better).
 func Score(node NodeInfo, requirements []string) float64 {
 	if !Match(node.Capabilities, requirements) {
@@ -45,7 +48,21 @@ func Score(node NodeInfo, requirements []string) float64 {
 		hbScore = 1.0 - (node.HeartbeatAge / 60.0)
 	}
 
-	return capScore*0.5 + loadScore*0.3 + hbScore*0.2
+	// Active tasks score: fewer active tasks relative to capacity = higher score
+	activeScore := 1.0
+	if node.MaxCapacity > 0 {
+		ratio := float64(node.ActiveTasks) / float64(node.MaxCapacity)
+		if ratio >= 1.0 {
+			activeScore = 0.0 // node is at capacity
+		} else {
+			activeScore = 1.0 - ratio
+		}
+	} else if node.ActiveTasks > 0 {
+		// No explicit capacity: penalize based on absolute count (dimin returns)
+		activeScore = 1.0 / (1.0 + float64(node.ActiveTasks))
+	}
+
+	return capScore*0.4 + loadScore*0.25 + hbScore*0.15 + activeScore*0.2
 }
 
 // RankNodes ranks nodes by score (descending). Returns only nodes with score >= 0.

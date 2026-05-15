@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -26,12 +27,16 @@ func IsTerminal(s TaskStatus) bool {
 	return s == TaskCompleted || s == TaskFailed
 }
 
+// DefaultPriority is the default task priority when none is specified (1=highest, 5=lowest).
+const DefaultPriority = 3
+
 // Task represents a schedulable unit of work.
 type Task struct {
 	ID          string     `json:"id"`
 	Title       string     `json:"title"`
 	Requires    []string   `json:"requires"`
 	DependsOn   []string   `json:"depends_on,omitempty"` // task IDs this task depends on
+	Priority    int        `json:"priority"`             // 1=highest, 5=lowest, default 3
 	Status      TaskStatus `json:"status"`
 	AssignedTo  string     `json:"assigned_to,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
@@ -61,8 +66,25 @@ func GenerateID() string {
 	return "task_" + hex.EncodeToString(b)
 }
 
+// normalizePriority clamps priority to [1,5] and defaults to 3 if zero/negative.
+func normalizePriority(p int) int {
+	if p < 1 {
+		return DefaultPriority
+	}
+	if p > 5 {
+		return 5
+	}
+	return p
+}
+
 // Create adds a new task. Returns an error if the ID already exists.
+// Priority defaults to DefaultPriority (3) if set to 0.
 func (s *TaskStore) Create(id, title string, requires []string) (*Task, error) {
+	return s.CreateWithPriority(id, title, requires, DefaultPriority)
+}
+
+// CreateWithPriority adds a new task with an explicit priority (1=highest, 5=lowest).
+func (s *TaskStore) CreateWithPriority(id, title string, requires []string, priority int) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.tasks[id]; exists {
@@ -73,6 +95,7 @@ func (s *TaskStore) Create(id, title string, requires []string) (*Task, error) {
 		ID:        id,
 		Title:     title,
 		Requires:  requires,
+		Priority:  normalizePriority(priority),
 		Status:    TaskReady,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -164,7 +187,8 @@ func (s *TaskStore) Unassign(id string) error {
 	return nil
 }
 
-// GetReady returns all tasks in Ready status.
+// GetReady returns all tasks in Ready status, sorted by priority ascending
+// (lower number = higher priority), then FIFO (earlier CreatedAt first).
 func (s *TaskStore) GetReady() []*Task {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -175,7 +199,19 @@ func (s *TaskStore) GetReady() []*Task {
 			result = append(result, &cp)
 		}
 	}
+	sortTasksByPriorityThenFIFO(result)
 	return result
+}
+
+// sortTasksByPriorityThenFIFO sorts tasks: priority ascending (1=highest first),
+// then by CreatedAt ascending (FIFO within same priority).
+func sortTasksByPriorityThenFIFO(tasks []*Task) {
+	sort.SliceStable(tasks, func(i, j int) bool {
+		if tasks[i].Priority != tasks[j].Priority {
+			return tasks[i].Priority < tasks[j].Priority // lower number = higher priority
+		}
+		return tasks[i].CreatedAt.Before(tasks[j].CreatedAt) // FIFO
+	})
 }
 
 // GetAll returns all tasks.
@@ -213,6 +249,7 @@ func (s *TaskStore) GetPending() []*Task {
 			result = append(result, &cp)
 		}
 	}
+	sortTasksByPriorityThenFIFO(result)
 	return result
 }
 
@@ -261,4 +298,43 @@ func (s *TaskStore) Unblock(id string) error {
 	t.UpdatedAt = time.Now()
 	t.Version++
 	return nil
+}
+
+// CountByStatus returns a map of task counts by status.
+func (s *TaskStore) CountByStatus() map[TaskStatus]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	counts := make(map[TaskStatus]int)
+	for _, t := range s.tasks {
+		counts[t.Status]++
+	}
+	return counts
+}
+
+// GetByNode returns all tasks assigned to a specific node.
+func (s *TaskStore) GetByNode(nodeID string) []*Task {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []*Task
+	for _, t := range s.tasks {
+		if t.AssignedTo == nodeID {
+			cp := *t
+			result = append(result, &cp)
+		}
+	}
+	return result
+}
+
+// ActiveCountForNode returns the number of tasks assigned to a node
+// (in assigned or running status).
+func (s *TaskStore) ActiveCountForNode(nodeID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, t := range s.tasks {
+		if t.AssignedTo == nodeID && (t.Status == TaskAssigned || t.Status == TaskRunning) {
+			count++
+		}
+	}
+	return count
 }
