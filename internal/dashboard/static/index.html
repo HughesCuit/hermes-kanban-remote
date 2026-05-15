@@ -420,6 +420,7 @@ body {
 <div class="header">
   <h1><span class="logo">&#9651;</span> Hermes Agent Cluster</h1>
   <div class="header-right">
+    <a href="/dashboard/guide.html" style="color:var(--accent);text-decoration:none;font-size:13px;padding:6px 12px;border-radius:6px;">Guide</a>
     <div class="refresh-badge">
       <span class="dot"></span>
       <span id="refresh-timer">Auto-refresh 5s</span>
@@ -429,6 +430,34 @@ body {
 
 <div class="container">
   <div class="error-banner" id="error-banner"></div>
+
+  <!-- Quick Entry Cards -->
+  <div class="summary-grid" style="margin-bottom:24px">
+    <a href="/dashboard/guide.html" class="card" style="text-decoration:none;cursor:pointer;transition:border-color 0.2s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <div class="card-label" style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:16px">&#128214;</span> Quick Start
+      </div>
+      <div class="card-value blue" style="font-size:14px;font-weight:500">View Guide</div>
+    </a>
+    <a href="/api/v1/status" class="card" style="text-decoration:none;cursor:pointer;transition:border-color 0.2s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <div class="card-label" style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:16px">&#128268;</span> API Status
+      </div>
+      <div class="card-value green" style="font-size:14px;font-weight:500">View JSON</div>
+    </a>
+    <a href="/api/v1/nodes" class="card" style="text-decoration:none;cursor:pointer;transition:border-color 0.2s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <div class="card-label" style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:16px">&#128421;</span> Nodes API
+      </div>
+      <div class="card-value purple" style="font-size:14px;font-weight:500">View JSON</div>
+    </a>
+    <a href="/metrics" class="card" style="text-decoration:none;cursor:pointer;transition:border-color 0.2s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <div class="card-label" style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:16px">&#128200;</span> Metrics
+      </div>
+      <div class="card-value yellow" style="font-size:14px;font-weight:500">Prometheus</div>
+    </a>
+  </div>
 
   <!-- Summary Cards -->
   <div class="summary-grid" id="summary-grid">
