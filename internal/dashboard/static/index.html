@@ -516,12 +516,11 @@ body {
             <th>Status</th>
             <th>Assigned To</th>
             <th>Requires</th>
-            <th>Dependencies</th>
             <th>Fail Reason</th>
           </tr>
         </thead>
         <tbody id="task-tbody">
-          <tr><td colspan="7" class="empty-msg">No tasks</td></tr>
+          <tr><td colspan="6" class="empty-msg">No tasks</td></tr>
         </tbody>
       </table>
     </div>
@@ -538,12 +537,16 @@ body {
         <div class="stat-label">Total Events</div>
       </div>
       <div class="stat-item">
-        <div class="stat-value" id="r-revoked">0</div>
-        <div class="stat-label">Leases Revoked</div>
+        <div class="stat-value" id="r-completed">0</div>
+        <div class="stat-label">Completed</div>
       </div>
       <div class="stat-item">
-        <div class="stat-value" id="r-rescheduled">0</div>
-        <div class="stat-label">Tasks Rescheduled</div>
+        <div class="stat-value" id="r-partial">0</div>
+        <div class="stat-label">Partial</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value" id="r-failed">0</div>
+        <div class="stat-label">Failed</div>
       </div>
       <div class="stat-item">
         <div class="stat-value" id="r-sync-version">0</div>
@@ -661,7 +664,7 @@ function renderTasks(entries) {
   }
 
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">No tasks match filters</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">No tasks match filters</td></tr>';
     return;
   }
 
@@ -672,7 +675,6 @@ function renderTasks(entries) {
       <td><span class="status-badge ${e.task_status}">${esc(e.task_status)}</span></td>
       <td>${e.node_name ? esc(e.node_name) : '<span style="color:var(--text-muted)">-</span>'}</td>
       <td class="dep-list">${(e.requires || []).join(', ') || '-'}</td>
-      <td class="dep-list">${esc(e.task_id)}</td>
       <td style="color:var(--red)">${e.fail_reason ? esc(e.fail_reason) : ''}</td>
     </tr>
   `).join('');
@@ -799,9 +801,10 @@ function renderGraph(graph) {
 // --- Render: Recovery ---
 function renderRecovery(stats) {
   if (!stats) return;
-  document.getElementById('r-total').textContent = stats.total_events || 0;
-  document.getElementById('r-revoked').textContent = stats.leases_revoked || 0;
-  document.getElementById('r-rescheduled').textContent = stats.tasks_rescheduled || 0;
+  document.getElementById('r-total').textContent = stats.total || 0;
+  document.getElementById('r-completed').textContent = stats.completed || 0;
+  document.getElementById('r-partial').textContent = stats.partial || 0;
+  document.getElementById('r-failed').textContent = stats.failed || 0;
 }
 
 // --- Main refresh ---

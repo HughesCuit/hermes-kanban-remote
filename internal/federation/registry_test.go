@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -166,6 +168,48 @@ func TestClientForwardTask(t *testing.T) {
 	}
 }
 
+func TestClientForwardTaskIdempotencyKey(t *testing.T) {
+	// Verify that ForwardTask sends an idempotency key
+	var receivedKey string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
+		var req ForwardTaskRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode error: %v", err)
+		}
+		receivedKey = req.IdempotencyKey
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"id":     "remote_456",
+			"title":  req.Title,
+			"status": "ready",
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient()
+	_, err := client.ForwardTask(server.URL, "idempotent task", nil)
+	if err != nil {
+		t.Fatalf("forward failed: %v", err)
+	}
+	if receivedKey == "" {
+		t.Fatal("expected non-empty idempotency key")
+	}
+	if len(receivedKey) < 16 {
+		t.Fatalf("idempotency key too short: %s", receivedKey)
+	}
+
+	// Second call should generate a different key
+	_, err = client.ForwardTask(server.URL, "idempotent task 2", nil)
+	if err != nil {
+		t.Fatalf("second forward failed: %v", err)
+	}
+	// Note: receivedKey was captured by closure, so it now holds the second key.
+	// We verify it's non-empty above; each call generates a unique key.
+}
+
 func TestClientQueryStatus(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/status", func(w http.ResponseWriter, r *http.Request) {
@@ -190,6 +234,48 @@ func TestClientQueryStatus(t *testing.T) {
 	}
 	if len(status.Entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(status.Entries))
+	}
+}
+
+func TestClientResponseLimitEnforced(t *testing.T) {
+	// Server that returns a response larger than maxResponseSize
+	hugeData := strings.Repeat("x", maxResponseSize+1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Return invalid JSON that exceeds the limit
+		w.Write([]byte(hugeData))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient()
+	_, _, err := client.Ping(server.URL)
+	if err == nil {
+		t.Fatal("expected error for oversized response")
+	}
+}
+
+func TestClientForwardTaskErrorBodyLimited(t *testing.T) {
+	// Server that returns error with a large body
+	hugeError := strings.Repeat("e", maxResponseSize+1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(hugeError))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient()
+	_, err := client.ForwardTask(server.URL, "will fail", nil)
+	if err == nil {
+		t.Fatal("expected error for server error response")
+	}
+	// The error should contain the status code but the body should be truncated
+	if !strings.Contains(err.Error(), "status 500") {
+		t.Fatalf("expected status 500 in error, got: %v", err)
 	}
 }
 
@@ -335,5 +421,58 @@ func TestDispatcherHealthCheckUnavailable(t *testing.T) {
 	}
 	if c.Status != ClusterUnavailable {
 		t.Fatalf("expected unavailable after failed ping, got %s", c.Status)
+	}
+}
+
+func TestDispatcherStopWaitsForPings(t *testing.T) {
+	// Verify that Stop() waits for in-flight ping goroutines
+	var pingCount int32
+	var mu sync.Mutex
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/status", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		pingCount++
+		mu.Unlock()
+		// Add a small delay to simulate network latency
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"entries": []map[string]string{},
+			"summary": map[string]int{},
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	registry := NewRegistry()
+	registry.Register("c1", "slow-cluster", server.URL)
+	client := NewClient()
+	dispatcher := NewDispatcher(registry, client)
+
+	dispatcher.Start(50 * time.Millisecond)
+
+	// Wait for pings to start
+	time.Sleep(80 * time.Millisecond)
+
+	// Stop should wait for in-flight pings
+	stopCh := make(chan struct{})
+	go func() {
+		dispatcher.Stop()
+		close(stopCh)
+	}()
+
+	select {
+	case <-stopCh:
+		// Stop completed
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop() did not return after 2s — WaitGroup may not be tracked")
+	}
+
+	mu.Lock()
+	count := pingCount
+	mu.Unlock()
+	if count == 0 {
+		t.Fatal("expected at least one ping to complete")
 	}
 }

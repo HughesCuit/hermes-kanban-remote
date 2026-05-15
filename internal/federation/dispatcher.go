@@ -2,6 +2,7 @@ package federation
 
 import (
 	"log"
+	"sync"
 	"time"
 )
 
@@ -10,6 +11,7 @@ type Dispatcher struct {
 	registry *Registry
 	client   *Client
 	stopCh   chan struct{}
+	wg       sync.WaitGroup
 }
 
 // NewDispatcher creates a new federation dispatcher.
@@ -24,16 +26,20 @@ func NewDispatcher(registry *Registry, client *Client) *Dispatcher {
 // Start begins the periodic health check loop for remote clusters.
 // checkInterval controls how often remote clusters are pinged.
 func (d *Dispatcher) Start(checkInterval time.Duration) {
+	d.wg.Add(1)
 	go d.healthCheckLoop(checkInterval)
 }
 
-// Stop terminates the background health check loop.
+// Stop terminates the background health check loop and waits for
+// all in-flight ping goroutines to complete.
 func (d *Dispatcher) Stop() {
 	close(d.stopCh)
+	d.wg.Wait()
 }
 
 // healthCheckLoop periodically pings all registered remote clusters.
 func (d *Dispatcher) healthCheckLoop(interval time.Duration) {
+	defer d.wg.Done()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -51,7 +57,9 @@ func (d *Dispatcher) healthCheckLoop(interval time.Duration) {
 func (d *Dispatcher) pingAll() {
 	clusters := d.registry.GetAll()
 	for _, c := range clusters {
+		d.wg.Add(1)
 		go func(cluster *RemoteCluster) {
+			defer d.wg.Done()
 			_, latency, err := d.client.Ping(cluster.Endpoint)
 			if err != nil {
 				log.Printf("federation: ping failed for %s (%s): %v", cluster.ID, cluster.Endpoint, err)

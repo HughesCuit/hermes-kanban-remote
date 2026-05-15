@@ -81,6 +81,7 @@ type WatchdogConfig struct {
 type FederationConfig struct {
 	Enabled       bool          `yaml:"enabled"`
 	PingInterval  time.Duration `yaml:"ping_interval"`
+	Token         string        `yaml:"token"` // shared secret for authenticating inbound federation requests
 }
 
 // DefaultConfig returns a sensible default configuration.

@@ -1,10 +1,14 @@
 package api
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -46,6 +50,7 @@ type Server struct {
 	PromMetrics *metrics.Collector
 	Federation  *federation.Dispatcher
 	FedRegistry *federation.Registry
+	FedToken    string // shared secret for authenticating inbound federation requests
 	HookManager *hooks.Manager
 	startedAt   time.Time
 	ClusterID   string
@@ -76,11 +81,12 @@ func WithHookManager(hm *hooks.Manager) ServerOption {
 	return func(s *Server) { s.HookManager = hm }
 }
 
-// WithFederation sets the federation dispatcher and registry for cross-cluster endpoints.
-func WithFederation(d *federation.Dispatcher, r *federation.Registry) ServerOption {
+// WithFederation sets the federation dispatcher, registry, and auth token for cross-cluster endpoints.
+func WithFederation(d *federation.Dispatcher, r *federation.Registry, token string) ServerOption {
 	return func(s *Server) {
 		s.Federation = d
 		s.FedRegistry = r
+		s.FedToken = token
 	}
 }
 
@@ -189,12 +195,15 @@ func (s *Server) setupRoutes() {
 		r.Get("/cluster/timeline", s.handleClusterTimeline)
 		r.Get("/cluster/viz", s.handleClusterViz)
 
-		// Federation (cross-cluster)
-		r.Post("/federation/clusters", s.handleFederationRegister)
-		r.Delete("/federation/clusters/{id}", s.handleFederationRemove)
-		r.Get("/federation/clusters", s.handleFederationList)
-		r.Get("/federation/clusters/{id}/status", s.handleFederationClusterStatus)
-		r.Post("/federation/tasks", s.handleFederationForwardTask)
+		// Federation (cross-cluster) — protected by cluster token auth
+		r.Route("/federation", func(fr chi.Router) {
+			fr.Use(s.federationAuth)
+			fr.Post("/clusters", s.handleFederationRegister)
+			fr.Delete("/clusters/{id}", s.handleFederationRemove)
+			fr.Get("/clusters", s.handleFederationList)
+			fr.Get("/clusters/{id}/status", s.handleFederationClusterStatus)
+			fr.Post("/tasks", s.handleFederationForwardTask)
+		})
 
 		// Webhook management
 		r.Post("/hooks", s.handleRegisterHook)
@@ -233,6 +242,35 @@ func writeJSON(w http.ResponseWriter, v interface{}) bool {
 		return false
 	}
 	return true
+}
+
+// federationAuth validates the Authorization header against the configured
+// cluster token. Returns 401 on missing/invalid credentials.
+// Only applies when s.FedToken is non-empty; when empty the middleware is a
+// no-op (allows federation without auth in single-cluster deployments).
+func (s *Server) federationAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.FedToken == "" {
+			// No token configured — open federation (single-cluster mode).
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			http.Error(w, "missing authorization header", http.StatusUnauthorized)
+			return
+		}
+
+		// Accept both "Bearer <token>" and raw token forms.
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.FedToken)) != 1 {
+			http.Error(w, "invalid federation token", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // --- Node handlers ---
@@ -777,8 +815,11 @@ func (s *Server) handleFederationRegister(w http.ResponseWriter, r *http.Request
 		http.Error(w, "name and endpoint are required", http.StatusBadRequest)
 		return
 	}
-	// Generate a stable ID from the endpoint
-	clusterID := "fed_" + req.Name
+	// Generate a unique, stable ID from the endpoint to prevent name-based collision.
+	// SHA256 of the endpoint ensures uniqueness across different endpoints even
+	// if they share the same name.
+	h := sha256.Sum256([]byte(req.Endpoint))
+	clusterID := "fed_" + hex.EncodeToString(h[:8])
 	cluster := s.FedRegistry.Register(clusterID, req.Name, req.Endpoint)
 	writeJSON(w, cluster)
 }

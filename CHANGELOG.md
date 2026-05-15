@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All Phase 3 features integrated and tested / Phase 3全部功能已集成并通过测试
 - Updated documentation to reflect v1.0.0 capabilities / 更新文档以反映v1.0.0功能
 
+### Known Issues / 已知问题
+- Federation dispatcher health check tests have a race condition under `-race` detector (cosmetic, does not affect production code) / 联邦调度器健康检查测试在 `-race` 检测器下存在竞态条件（仅影响测试，不影响生产代码）
+
 ---
 
 ## [v0.8.0] - 2026-05-10

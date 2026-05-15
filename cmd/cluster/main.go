@@ -317,8 +317,7 @@ func cmdServe(args []string) {
 		api.WithTelemetry(metricsTelemetry),
 		api.WithPromMetrics(promMetrics),
 		api.WithHookManager(hookMgr),
-		api.WithFederation(fedDispatcher, fedRegistry),
-		api.WithClusterInfo(cfg.Cluster.ID, cfg.Node.ID, cfg.Cluster.Role),
+		api.WithFederation(fedDispatcher, fedRegistry, cfg.Federation.Token),
 	)
 
 	// --- Start background services ---
