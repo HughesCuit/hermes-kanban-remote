@@ -313,6 +313,7 @@ func cmdServe(args []string) {
 		receiver,
 		leaderSync,
 		resolver,
+		api.WithConfig(cfg, *configPath),
 		api.WithClusterView(clusterView),
 		api.WithTelemetry(metricsTelemetry),
 		api.WithPromMetrics(promMetrics),

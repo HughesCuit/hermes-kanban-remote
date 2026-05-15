@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/heventure/hermes-agent-cluster/internal/cluster"
+	"github.com/heventure/hermes-agent-cluster/internal/config"
 	"github.com/heventure/hermes-agent-cluster/internal/dashboard"
 	"github.com/heventure/hermes-agent-cluster/internal/federation"
 	"github.com/heventure/hermes-agent-cluster/internal/hooks"
@@ -52,6 +54,8 @@ type Server struct {
 	FedRegistry *federation.Registry
 	FedToken    string // shared secret for authenticating inbound federation requests
 	HookManager *hooks.Manager
+	Config      *config.Config
+	ConfigPath  string
 	startedAt   time.Time
 	ClusterID   string
 	NodeID      string
@@ -96,6 +100,14 @@ func WithClusterInfo(clusterID, nodeID, role string) ServerOption {
 		s.ClusterID = clusterID
 		s.NodeID = nodeID
 		s.NodeRole = role
+	}
+}
+
+// WithConfig sets the runtime config and file path for config management endpoints.
+func WithConfig(c *config.Config, configPath string) ServerOption {
+	return func(s *Server) {
+		s.Config = c
+		s.ConfigPath = configPath
 	}
 }
 
@@ -215,6 +227,10 @@ func (s *Server) setupRoutes() {
 
 		// Summary
 		r.Get("/summary", s.handleSummary)
+
+		// Config management
+		r.Get("/config", s.handleGetConfig)
+		r.Put("/config", s.handleUpdateConfig)
 	})
 
 	// Prometheus metrics endpoint (outside /api/v1 to avoid auth middleware)
@@ -1048,4 +1064,331 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		"sync_version":  s.StateStore.Version(),
 		"uptime_seconds": int(time.Since(s.startedAt).Seconds()),
 	})
+}
+
+// --- Config handlers ---
+
+// configJSON is a JSON-friendly representation of config.Config with durations as strings.
+type configJSON struct {
+	Cluster    clusterConfigJSON    `json:"cluster"`
+	Node       nodeConfigJSON       `json:"node"`
+	Server     serverConfigJSON     `json:"server"`
+	Lease      leaseConfigJSON      `json:"lease"`
+	Watchdog   watchdogConfigJSON   `json:"watchdog"`
+	TLS        tlsConfigJSON        `json:"tls"`
+	Heartbeat  heartbeatConfigJSON  `json:"heartbeat"`
+	Reconnect  reconnectConfigJSON  `json:"reconnect"`
+	Federation federationConfigJSON `json:"federation"`
+	Telemetry  telemetryConfigJSON  `json:"telemetry"`
+}
+
+type clusterConfigJSON struct {
+	ID       string `json:"id"`
+	Role     string `json:"role"`
+	Endpoint string `json:"endpoint"`
+	Token    string `json:"token"`
+}
+
+type nodeConfigJSON struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Capabilities []string `json:"capabilities"`
+}
+
+type serverConfigJSON struct {
+	Bind string `json:"bind"`
+	Port int    `json:"port"`
+}
+
+type leaseConfigJSON struct {
+	TTL      string `json:"ttl"`
+	ScanRate string `json:"scan_rate"`
+}
+
+type watchdogConfigJSON struct {
+	CheckInterval string `json:"check_interval"`
+	DegradedAfter  string `json:"degraded_after"`
+	OfflineAfter   string `json:"offline_after"`
+}
+
+type tlsConfigJSON struct {
+	Enabled  bool   `json:"enabled"`
+	CertFile string `json:"cert_file"`
+	KeyFile  string `json:"key_file"`
+}
+
+type heartbeatConfigJSON struct {
+	Interval     string `json:"interval"`
+	LeaseTimeout string `json:"lease_timeout"`
+}
+
+type reconnectConfigJSON struct {
+	InitialInterval string  `json:"initial_interval"`
+	MaxInterval     string  `json:"max_interval"`
+	Multiplier      float64 `json:"multiplier"`
+}
+
+type federationConfigJSON struct {
+	Enabled      bool   `json:"enabled"`
+	PingInterval string `json:"ping_interval"`
+	Token        string `json:"token"`
+}
+
+type telemetryConfigJSON struct {
+	Enabled      bool    `json:"enabled"`
+	Exporter     string  `json:"exporter"`
+	Endpoint     string  `json:"endpoint"`
+	ServiceName  string  `json:"service_name"`
+	SampleRate   float64 `json:"sample_rate"`
+	BatchTimeout string  `json:"batch_timeout"`
+}
+
+func durStr(d time.Duration) string {
+	if d == 0 {
+		return "0s"
+	}
+	return d.String()
+}
+
+func configToJSON(c *config.Config) configJSON {
+	return configJSON{
+		Cluster: clusterConfigJSON{
+			ID:       c.Cluster.ID,
+			Role:     c.Cluster.Role,
+			Endpoint: c.Cluster.Endpoint,
+			Token:    c.Cluster.Token,
+		},
+		Node: nodeConfigJSON{
+			ID:           c.Node.ID,
+			Name:         c.Node.Name,
+			Capabilities: c.Node.Capabilities,
+		},
+		Server: serverConfigJSON{
+			Bind: c.Server.Bind,
+			Port: c.Server.Port,
+		},
+		Lease: leaseConfigJSON{
+			TTL:      durStr(c.Lease.TTL),
+			ScanRate: durStr(c.Lease.ScanRate),
+		},
+		Watchdog: watchdogConfigJSON{
+			CheckInterval: durStr(c.Watchdog.CheckInterval),
+			DegradedAfter:  durStr(c.Watchdog.DegradedAfter),
+			OfflineAfter:   durStr(c.Watchdog.OfflineAfter),
+		},
+		TLS: tlsConfigJSON{
+			Enabled:  c.TLS.Enabled,
+			CertFile: c.TLS.CertFile,
+			KeyFile:  c.TLS.KeyFile,
+		},
+		Heartbeat: heartbeatConfigJSON{
+			Interval:     durStr(c.Heartbeat.Interval),
+			LeaseTimeout: durStr(c.Heartbeat.LeaseTimeout),
+		},
+		Reconnect: reconnectConfigJSON{
+			InitialInterval: durStr(c.Reconnect.InitialInterval),
+			MaxInterval:     durStr(c.Reconnect.MaxInterval),
+			Multiplier:      c.Reconnect.Multiplier,
+		},
+		Federation: federationConfigJSON{
+			Enabled:      c.Federation.Enabled,
+			PingInterval: durStr(c.Federation.PingInterval),
+			Token:        c.Federation.Token,
+		},
+		Telemetry: telemetryConfigJSON{
+			Enabled:      c.Telemetry.Enabled,
+			Exporter:     c.Telemetry.Exporter,
+			Endpoint:     c.Telemetry.Endpoint,
+			ServiceName:  c.Telemetry.ServiceName,
+			SampleRate:   c.Telemetry.SampleRate,
+			BatchTimeout: durStr(c.Telemetry.BatchTimeout),
+		},
+	}
+}
+
+func parseDur(s string) (time.Duration, error) {
+	if s == "" || s == "0" || s == "0s" {
+		return 0, nil
+	}
+	return time.ParseDuration(s)
+}
+
+func jsonToConfig(j configJSON) (*config.Config, error) {
+	leaseTTL, err := parseDur(j.Lease.TTL)
+	if err != nil {
+		return nil, fmt.Errorf("lease.ttl: %w", err)
+	}
+	leaseScan, err := parseDur(j.Lease.ScanRate)
+	if err != nil {
+		return nil, fmt.Errorf("lease.scan_rate: %w", err)
+	}
+	wdCheck, err := parseDur(j.Watchdog.CheckInterval)
+	if err != nil {
+		return nil, fmt.Errorf("watchdog.check_interval: %w", err)
+	}
+	wdDegraded, err := parseDur(j.Watchdog.DegradedAfter)
+	if err != nil {
+		return nil, fmt.Errorf("watchdog.degraded_after: %w", err)
+	}
+	wdOffline, err := parseDur(j.Watchdog.OfflineAfter)
+	if err != nil {
+		return nil, fmt.Errorf("watchdog.offline_after: %w", err)
+	}
+	hbInterval, err := parseDur(j.Heartbeat.Interval)
+	if err != nil {
+		return nil, fmt.Errorf("heartbeat.interval: %w", err)
+	}
+	hbTimeout, err := parseDur(j.Heartbeat.LeaseTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("heartbeat.lease_timeout: %w", err)
+	}
+	rcInitial, err := parseDur(j.Reconnect.InitialInterval)
+	if err != nil {
+		return nil, fmt.Errorf("reconnect.initial_interval: %w", err)
+	}
+	rcMax, err := parseDur(j.Reconnect.MaxInterval)
+	if err != nil {
+		return nil, fmt.Errorf("reconnect.max_interval: %w", err)
+	}
+	fedPing, err := parseDur(j.Federation.PingInterval)
+	if err != nil {
+		return nil, fmt.Errorf("federation.ping_interval: %w", err)
+	}
+	telBatch, err := parseDur(j.Telemetry.BatchTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("telemetry.batch_timeout: %w", err)
+	}
+
+	return &config.Config{
+		Cluster: config.ClusterConfig{
+			ID:       j.Cluster.ID,
+			Role:     j.Cluster.Role,
+			Endpoint: j.Cluster.Endpoint,
+			Token:    j.Cluster.Token,
+		},
+		Node: config.NodeConfig{
+			ID:           j.Node.ID,
+			Name:         j.Node.Name,
+			Capabilities: j.Node.Capabilities,
+		},
+		Server: config.ServerConfig{
+			Bind: j.Server.Bind,
+			Port: j.Server.Port,
+		},
+		Lease: config.LeaseConfig{
+			TTL:      leaseTTL,
+			ScanRate: leaseScan,
+		},
+		Watchdog: config.WatchdogConfig{
+			CheckInterval: wdCheck,
+			DegradedAfter:  wdDegraded,
+			OfflineAfter:   wdOffline,
+		},
+		TLS: config.TLSConfig{
+			Enabled:  j.TLS.Enabled,
+			CertFile: j.TLS.CertFile,
+			KeyFile:  j.TLS.KeyFile,
+		},
+		Heartbeat: config.HeartbeatConfig{
+			Interval:     hbInterval,
+			LeaseTimeout: hbTimeout,
+		},
+		Reconnect: config.ReconnectConfig{
+			InitialInterval: rcInitial,
+			MaxInterval:     rcMax,
+			Multiplier:      j.Reconnect.Multiplier,
+		},
+		Federation: config.FederationConfig{
+			Enabled:      j.Federation.Enabled,
+			PingInterval: fedPing,
+			Token:        j.Federation.Token,
+		},
+		Telemetry: telemetry.Config{
+			Enabled:      j.Telemetry.Enabled,
+			Exporter:     j.Telemetry.Exporter,
+			Endpoint:     j.Telemetry.Endpoint,
+			ServiceName:  j.Telemetry.ServiceName,
+			SampleRate:   j.Telemetry.SampleRate,
+			BatchTimeout: telBatch,
+		},
+	}, nil
+}
+
+func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	if s.Config == nil {
+		http.Error(w, "config not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Support ?defaults=true to return default config
+	if r.URL.Query().Get("defaults") == "true" {
+		def := config.DefaultConfig()
+		writeJSON(w, configToJSON(def))
+		return
+	}
+
+	writeJSON(w, configToJSON(s.Config))
+}
+
+func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
+	if s.Config == nil {
+		http.Error(w, `{"error":"config not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	limitBody(w, r)
+
+	var cfgJSON configJSON
+	if err := json.NewDecoder(r.Body).Decode(&cfgJSON); err != nil {
+		http.Error(w, `{"error":"invalid JSON: `+escJSON(err.Error())+`"}`, http.StatusBadRequest)
+		return
+	}
+
+	newCfg, err := jsonToConfig(cfgJSON)
+	if err != nil {
+		http.Error(w, `{"error":"invalid duration: `+escJSON(err.Error())+`"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate
+	if validationErrs := newCfg.ValidateDetailed(); validationErrs != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		errs := make([]map[string]string, len(validationErrs))
+		for i, ve := range validationErrs {
+			errs[i] = map[string]string{
+				"field":      ve.Field,
+				"message":    ve.Message,
+				"suggestion": ve.Suggestion,
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":  "validation failed",
+			"errors": errs,
+		})
+		return
+	}
+
+	// Save to file if path is configured
+	if s.ConfigPath != "" {
+		if err := config.Save(newCfg, s.ConfigPath); err != nil {
+			http.Error(w, `{"error":"failed to save config: `+escJSON(err.Error())+`"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Update the in-memory config
+	*s.Config = *newCfg
+
+	writeJSON(w, map[string]interface{}{
+		"status":  "saved",
+		"config":  configToJSON(s.Config),
+	})
+}
+
+func escJSON(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	return s
 }
