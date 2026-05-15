@@ -1,6 +1,6 @@
 # hermes-agent-cluster
 
-**Hermes 分布式 Kanban 集群扩展** — v0.6.0
+**Hermes 分布式 Kanban 集群扩展** — v0.8.0
 
 `hermes-agent-cluster` 是 Hermes 的分布式集群扩展插件，允许多台设备上的独立 Hermes 实例协同工作。
 
@@ -268,7 +268,7 @@ hermes-agent-cluster/
   └──────┘└─────┘└─────┘
 ```
 
-每个节点独立运行 Hermes 实例，通过 HTTP API 进行集群协调。节点之间仅同步任务元数据和事件，不共享数据库。v0.5.0 新增 Web Dashboard、集群可视化、OpenTelemetry 追踪和 Prometheus 指标。
+每个节点独立运行 Hermes 实例，通过 HTTP API 进行集群协调。节点之间仅同步任务元数据和事件，不共享数据库。v0.8.0 包含完整的可观测性栈：Web Dashboard、集群可视化、OpenTelemetry 追踪、Prometheus 指标和 E2E 验证修复。
 
 ---
 
