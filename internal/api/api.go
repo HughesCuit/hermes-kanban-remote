@@ -13,6 +13,8 @@ import (
 
 	"github.com/heventure/hermes-agent-cluster/internal/cluster"
 	"github.com/heventure/hermes-agent-cluster/internal/dashboard"
+	"github.com/heventure/hermes-agent-cluster/internal/federation"
+	"github.com/heventure/hermes-agent-cluster/internal/hooks"
 	"github.com/heventure/hermes-agent-cluster/internal/lease"
 	"github.com/heventure/hermes-agent-cluster/internal/metrics"
 	"github.com/heventure/hermes-agent-cluster/internal/recovery"
@@ -42,6 +44,9 @@ type Server struct {
 	ClusterView *visualization.ClusterView
 	Telemetry   *telemetry.Metrics
 	PromMetrics *metrics.Collector
+	Federation  *federation.Dispatcher
+	FedRegistry *federation.Registry
+	HookManager *hooks.Manager
 }
 
 // ServerOption configures optional Server fields.
@@ -60,6 +65,19 @@ func WithTelemetry(m *telemetry.Metrics) ServerOption {
 // WithPromMetrics sets the Prometheus metrics collector and installs metrics middleware.
 func WithPromMetrics(c *metrics.Collector) ServerOption {
 	return func(s *Server) { s.PromMetrics = c }
+}
+
+// WithHookManager sets the webhook manager for hook endpoints.
+func WithHookManager(hm *hooks.Manager) ServerOption {
+	return func(s *Server) { s.HookManager = hm }
+}
+
+// WithFederation sets the federation dispatcher and registry for cross-cluster endpoints.
+func WithFederation(d *federation.Dispatcher, r *federation.Registry) ServerOption {
+	return func(s *Server) {
+		s.Federation = d
+		s.FedRegistry = r
+	}
 }
 
 // NewServer creates a new API server.
@@ -152,6 +170,19 @@ func (s *Server) setupRoutes() {
 		r.Get("/cluster/metrics", s.handleClusterMetrics)
 		r.Get("/cluster/timeline", s.handleClusterTimeline)
 		r.Get("/cluster/viz", s.handleClusterViz)
+
+		// Federation (cross-cluster)
+		r.Post("/federation/clusters", s.handleFederationRegister)
+		r.Delete("/federation/clusters/{id}", s.handleFederationRemove)
+		r.Get("/federation/clusters", s.handleFederationList)
+		r.Get("/federation/clusters/{id}/status", s.handleFederationClusterStatus)
+		r.Post("/federation/tasks", s.handleFederationForwardTask)
+
+		// Webhook management
+		r.Post("/hooks", s.handleRegisterHook)
+		r.Delete("/hooks/{id}", s.handleDeregisterHook)
+		r.Get("/hooks", s.handleListHooks)
+		r.Get("/hooks/{id}/deliveries", s.handleHookDeliveries)
 	})
 
 	// Prometheus metrics endpoint (outside /api/v1 to avoid auth middleware)
@@ -677,4 +708,185 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"entries": entries,
 		"summary": summary,
 	})
+}
+
+// --- Federation handlers ---
+
+type federationRegisterRequest struct {
+	Name     string `json:"name"`
+	Endpoint string `json:"endpoint"`
+}
+
+func (s *Server) handleFederationRegister(w http.ResponseWriter, r *http.Request) {
+	if s.FedRegistry == nil {
+		http.Error(w, "federation not configured", http.StatusServiceUnavailable)
+		return
+	}
+	limitBody(w, r)
+	var req federationRegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.Endpoint == "" {
+		http.Error(w, "name and endpoint are required", http.StatusBadRequest)
+		return
+	}
+	// Generate a stable ID from the endpoint
+	clusterID := "fed_" + req.Name
+	cluster := s.FedRegistry.Register(clusterID, req.Name, req.Endpoint)
+	writeJSON(w, cluster)
+}
+
+func (s *Server) handleFederationRemove(w http.ResponseWriter, r *http.Request) {
+	if s.FedRegistry == nil {
+		http.Error(w, "federation not configured", http.StatusServiceUnavailable)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if !s.FedRegistry.Remove(id) {
+		http.Error(w, "cluster not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "removed"})
+}
+
+func (s *Server) handleFederationList(w http.ResponseWriter, r *http.Request) {
+	if s.FedRegistry == nil {
+		http.Error(w, "federation not configured", http.StatusServiceUnavailable)
+		return
+	}
+	clusters := s.FedRegistry.GetAll()
+	writeJSON(w, map[string]interface{}{
+		"clusters": clusters,
+		"total":    len(clusters),
+	})
+}
+
+func (s *Server) handleFederationClusterStatus(w http.ResponseWriter, r *http.Request) {
+	if s.Federation == nil {
+		http.Error(w, "federation not configured", http.StatusServiceUnavailable)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	status, err := s.Federation.QueryClusterStatus(id)
+	if err != nil {
+		if ferr, ok := err.(federation.FederationError); ok {
+			switch ferr {
+			case federation.ErrClusterNotFound:
+				http.Error(w, err.Error(), http.StatusNotFound)
+			case federation.ErrClusterUnavailable:
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			default:
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, status)
+}
+
+type federationForwardRequest struct {
+	ClusterID string   `json:"cluster_id"`
+	Title     string   `json:"title"`
+	Requires  []string `json:"requires"`
+}
+
+func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Request) {
+	if s.Federation == nil {
+		http.Error(w, "federation not configured", http.StatusServiceUnavailable)
+		return
+	}
+	limitBody(w, r)
+	var req federationForwardRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.ClusterID == "" || req.Title == "" {
+		http.Error(w, "cluster_id and title are required", http.StatusBadRequest)
+		return
+	}
+	remoteID, err := s.Federation.ForwardTask(req.ClusterID, req.Title, req.Requires)
+	if err != nil {
+		if ferr, ok := err.(federation.FederationError); ok {
+			switch ferr {
+			case federation.ErrClusterNotFound:
+				http.Error(w, err.Error(), http.StatusNotFound)
+			case federation.ErrClusterUnavailable:
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			default:
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"status":       "forwarded",
+		"cluster_id":   req.ClusterID,
+		"remote_task_id": remoteID,
+	})
+}
+
+// --- Webhook handlers ---
+
+type registerHookRequest struct {
+	URL    string            `json:"url"`
+	Events []hooks.EventType `json:"events"`
+	Secret string            `json:"secret,omitempty"`
+}
+
+func (s *Server) handleRegisterHook(w http.ResponseWriter, r *http.Request) {
+	if s.HookManager == nil {
+		http.Error(w, "webhook system not configured", http.StatusServiceUnavailable)
+		return
+	}
+	limitBody(w, r)
+	var req registerHookRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	hook, err := s.HookManager.Register(req.URL, req.Events, req.Secret)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, hook)
+}
+
+func (s *Server) handleDeregisterHook(w http.ResponseWriter, r *http.Request) {
+	if s.HookManager == nil {
+		http.Error(w, "webhook system not configured", http.StatusServiceUnavailable)
+		return
+	}
+	hookID := chi.URLParam(r, "id")
+	if err := s.HookManager.Deregister(hookID); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "deregistered"})
+}
+
+func (s *Server) handleListHooks(w http.ResponseWriter, r *http.Request) {
+	if s.HookManager == nil {
+		http.Error(w, "webhook system not configured", http.StatusServiceUnavailable)
+		return
+	}
+	hooks := s.HookManager.List()
+	writeJSON(w, hooks)
+}
+
+func (s *Server) handleHookDeliveries(w http.ResponseWriter, r *http.Request) {
+	if s.HookManager == nil {
+		http.Error(w, "webhook system not configured", http.StatusServiceUnavailable)
+		return
+	}
+	hookID := chi.URLParam(r, "id")
+	deliveries := s.HookManager.GetDeliveries(hookID)
+	writeJSON(w, deliveries)
 }

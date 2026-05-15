@@ -13,7 +13,9 @@ import (
 	"github.com/heventure/hermes-agent-cluster/internal/api"
 	"github.com/heventure/hermes-agent-cluster/internal/cluster"
 	"github.com/heventure/hermes-agent-cluster/internal/config"
+	"github.com/heventure/hermes-agent-cluster/internal/federation"
 	"github.com/heventure/hermes-agent-cluster/internal/heartbeat"
+	"github.com/heventure/hermes-agent-cluster/internal/hooks"
 	"github.com/heventure/hermes-agent-cluster/internal/lease"
 	"github.com/heventure/hermes-agent-cluster/internal/metrics"
 	"github.com/heventure/hermes-agent-cluster/internal/recovery"
@@ -128,12 +130,28 @@ func main() {
 	promMetrics := metrics.New()
 	log.Printf("prometheus metrics registered at /metrics")
 
+	// --- Hooks: webhook plugin SDK ---
+	hookDispatcher := hooks.NewDispatcher(
+		hooks.WithMaxRetries(3),
+		hooks.WithBaseDelay(1*time.Second),
+		hooks.WithHTTPTimeout(10*time.Second),
+		hooks.WithWorkerCount(4),
+	)
+	hookMgr := hooks.NewManager(hookDispatcher, 1000)
+	hookDispatcher.Start()
+
 	// --- Lease expiry callback: triggers recovery on lease expiry ---
 	leaseMgr.SetExpiryCallback(func(taskID, nodeID string) {
 		log.Printf("lease expired: task=%s node=%s", taskID, nodeID)
 		// Mark node as offline in registry so scheduler won't pick it again
 		registry.UpdateStatus(nodeID, cluster.NodeOffline)
 		detector.NotifyOffline(nodeID)
+
+		// Emit lease_expired event to webhook subscribers
+		hookMgr.Emit(hooks.EventLeaseExpired, map[string]string{
+			"task_id": taskID,
+			"node_id": nodeID,
+		})
 
 		// Prometheus: record lease expiry + update active count
 		promMetrics.LeaseExpired()
@@ -174,6 +192,15 @@ func main() {
 		}
 	}()
 
+	// --- Federation: cross-cluster discovery and task forwarding ---
+	fedRegistry := federation.NewRegistry()
+	fedClient := federation.NewClient()
+	fedDispatcher := federation.NewDispatcher(fedRegistry, fedClient)
+	if cfg.Federation.Enabled {
+		fedDispatcher.Start(cfg.Federation.PingInterval)
+		log.Printf("federation enabled: health-check interval=%v", cfg.Federation.PingInterval)
+	}
+
 	// --- Build API server ---
 	server := api.NewServer(
 		registry,
@@ -188,6 +215,8 @@ func main() {
 		api.WithClusterView(clusterView),
 		api.WithTelemetry(metricsTelemetry),
 		api.WithPromMetrics(promMetrics),
+		api.WithHookManager(hookMgr),
+		api.WithFederation(fedDispatcher, fedRegistry),
 	)
 
 	// --- Start background services ---
@@ -235,6 +264,8 @@ func main() {
 	close(stopCh)
 	watchdog.Stop()
 	detector.Stop()
+	hookDispatcher.Stop()
+	fedDispatcher.Stop()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

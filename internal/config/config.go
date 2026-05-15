@@ -11,12 +11,13 @@ import (
 
 // Config represents the full cluster configuration.
 type Config struct {
-	Cluster   ClusterConfig   `yaml:"cluster"`
-	Node      NodeConfig      `yaml:"node"`
-	Server    ServerConfig    `yaml:"server"`
-	Lease     LeaseConfig     `yaml:"lease"`
-	Watchdog  WatchdogConfig  `yaml:"watchdog"`
-	Telemetry telemetry.Config `yaml:"telemetry"`
+	Cluster    ClusterConfig    `yaml:"cluster"`
+	Node       NodeConfig       `yaml:"node"`
+	Server     ServerConfig     `yaml:"server"`
+	Lease      LeaseConfig      `yaml:"lease"`
+	Watchdog   WatchdogConfig   `yaml:"watchdog"`
+	Federation FederationConfig `yaml:"federation"`
+	Telemetry  telemetry.Config  `yaml:"telemetry"`
 }
 
 // ClusterConfig holds cluster-wide settings.
@@ -53,6 +54,12 @@ type WatchdogConfig struct {
 	OfflineAfter   time.Duration `yaml:"offline_after"`
 }
 
+// FederationConfig holds cross-cluster federation settings.
+type FederationConfig struct {
+	Enabled       bool          `yaml:"enabled"`
+	PingInterval  time.Duration `yaml:"ping_interval"`
+}
+
 // DefaultConfig returns a sensible default configuration.
 func DefaultConfig() *Config {
 	return &Config{
@@ -76,6 +83,10 @@ func DefaultConfig() *Config {
 			CheckInterval: 5 * time.Second,
 			DegradedAfter:  15 * time.Second,
 			OfflineAfter:   30 * time.Second,
+		},
+		Federation: FederationConfig{
+			Enabled:      true,
+			PingInterval: 30 * time.Second,
 		},
 		Telemetry: telemetry.DefaultConfig(),
 	}

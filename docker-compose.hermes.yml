@@ -7,7 +7,7 @@ services:
     ports:
       - "8787:8787"
     environment:
-      - XIAOMI_API_KEY=${XIAOMI_API_KEY}
+      - XIAOMI_API_KEY=***
       - XIAOMI_BASE_URL=${XIAOMI_BASE_URL:-https://token-plan-sgp.xiaomimimo.com/v1}
       - HERMES_HOME=/root/.hermes
     volumes:
@@ -27,7 +27,7 @@ services:
     ports:
       - "8788:8787"
     environment:
-      - XIAOMI_API_KEY=${XIAOMI_API_KEY}
+      - XIAOMI_API_KEY=***
       - XIAOMI_BASE_URL=${XIAOMI_BASE_URL:-https://token-plan-sgp.xiaomimimo.com/v1}
       - HERMES_HOME=/root/.hermes
     volumes:
