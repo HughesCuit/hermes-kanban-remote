@@ -16,6 +16,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.1.0] - 2026-05-15
+
+### Added / 新增
+- **CLI subcommands:** `serve`, `status`, `health`, `config init`, `config validate` — unified command interface / CLI子命令：serve、status、health、config init、config validate——统一命令接口
+- **GET /health endpoint:** Lightweight health check for load balancers and orchestrators / GET /health端点：轻量级健康检查，适用于负载均衡器和编排器
+- **GET /api/v1/summary:** Cluster overview with node count, task stats, and federation status / GET /api/v1/summary：集群概览，包含节点数、任务统计和联邦状态
+- **ValidateDetailed():** Comprehensive config validation with field-level error messages / ValidateDetailed()：全面配置验证，提供字段级错误信息
+- **Plugin auto-start:** Cluster service lifecycle hooks — `on_session_start` auto-starts hermes-cluster, `on_session_end` gracefully shuts down / 插件自动启动：集群服务生命周期钩子——on_session_start自动启动hermes-cluster，on_session_end优雅关闭
+- **Federation auth:** Token-based authentication for cross-cluster endpoints (`federation.token` in config) / 联邦认证：跨集群端点的令牌认证（配置中federation.token）
+
+### Changed / 变更
+- Dashboard recovery stats: field names now match API response (total/completed/partial/failed) / 仪表盘恢复统计：字段名与API响应匹配（total/completed/partial/failed）
+- Removed phantom Dependencies column from task table / 移除任务表中的虚拟Dependencies列
+- Federation dispatcher now uses WaitGroup for graceful shutdown / 联邦调度器使用WaitGroup实现优雅关闭
+- Plugin README restructured with clearer install/usage instructions / 插件README重组，安装/使用说明更清晰
+
+### Fixed / 修复
+- Plugin integration tests added (312 lines) / 新增插件集成测试（312行）
+- Federation registry tests for idempotency keys and response size limits / 联邦注册表测试：幂等键和响应大小限制
+- Fixed `QueryClusterStatus` return type to `*StatusResponse` / 修复QueryClusterStatus返回类型为*StatusResponse
+
+---
+
 ## [v1.0.0] - 2026-05-15
 
 ### Added / 新增
