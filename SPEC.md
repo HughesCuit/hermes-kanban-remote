@@ -557,21 +557,126 @@ SQLite（仅本地）
 
 ---
 
-## Phase 2
+## Phase 2 ✅
 
-* Web Dashboard
-* Cluster 可视化
-* Metrics
-* OpenTelemetry
+* [x] Web Dashboard — v0.5.0
+* [x] Cluster 可视化 — v0.6.0
+* [x] Metrics (Prometheus) — v0.7.0
+* [x] OpenTelemetry — v0.8.0
 
 ---
 
 ## Phase 3
 
-* Plugin SDK
-* 动态调度器
-* 多集群联邦
-* WAN 集群
+### P3-1: Plugin SDK
+
+通过 Webhook 机制允许第三方扩展接入集群生命周期事件。
+
+**设计：**
+- 注册/注销 Webhook URL（POST /api/v1/hooks）
+- 每次集群事件触发后异步调用已注册的 hook
+- 支持事件类型：`task_created`, `task_completed`, `task_failed`, `node_joined`, `node_left`, `lease_created`, `lease_expired`
+- Webhook payload 包含事件类型 + 完整事件数据
+- 带重试机制（3 次指数退避）
+- 支持签名验证（HMAC-SHA256）
+
+**API：**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/hooks` | 注册 webhook |
+| DELETE | `/api/v1/hooks/{id}` | 注销 webhook |
+| GET | `/api/v1/hooks` | 列出已注册 hooks |
+| GET | `/api/v1/hooks/{id}/deliveries` | 查看投递记录 |
+
+### P3-2: 动态调度器
+
+基于节点负载 + 任务优先级的智能调度。
+
+**设计：**
+- 任务支持 `priority` 字段（1=最高，5=最低）
+- 调度器按优先级排序，同优先级按 FIFO
+- 节点负载追踪（已有 `load` 字段，增强计算）
+- 策略：least-loaded-first + capability 匹配
+- 调度决策记录（谁被调度到谁、为什么）
+- 调度指标暴露（调度次数、平均等待时间、调度失败原因）
+
+**API：**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/schedule/stats` | 调度统计 |
+| POST | `/api/v1/tasks` | （扩展）支持 priority 字段 |
+
+### P3-3: 多集群联邦
+
+多个 hermes-agent-cluster 实例之间可以协作。
+
+**设计：**
+- 集群注册：通过 API 注册远程集群地址
+- 任务转发：提交任务时可指定目标集群
+- 跨集群状态查询：查询远程集群的节点/任务状态
+- 联邦拓扑：本地集群可以看到所有已知集群的结构
+- 心跳保活：定期检查远程集群可用性
+
+**API：**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/federation/clusters` | 注册远程集群 |
+| DELETE | `/api/v1/federation/clusters/{id}` | 移除集群 |
+| GET | `/api/v1/federation/clusters` | 列出已知集群 |
+| GET | `/api/v1/federation/clusters/{id}/status` | 查询远程集群状态 |
+| POST | `/api/v1/federation/tasks` | 转发任务到远程集群 |
+
+### P3-4: WAN 集群
+
+支持跨公网部署的集群节点。
+
+**设计：**
+- TLS 支持：API 服务器可选 TLS 证书
+- 可配置心跳间隔（WAN 默认 30s，LAN 默认 15s）
+- 自动重连：断开后指数退避重连（1s → 2s → 4s → ... → 60s max）
+- WAN 优化的批量事件同步（合并多个事件一次性发送）
+- 节点 endpoint 支持 URL 格式（http:// 或 https://）
+
+**配置扩展：**
+
+```yaml
+server:
+  bind: "0.0.0.0"
+  port: 8787
+  tls:
+    enabled: true
+    cert_file: "/etc/certs/cluster.crt"
+    key_file: "/etc/certs/cluster.key"
+
+heartbeat:
+  interval: 30s          # WAN: 30s, LAN: 15s
+  lease_timeout: 120s    # WAN: 120s, LAN: 60s
+
+reconnect:
+  initial_interval: 1s
+  max_interval: 60s
+  multiplier: 2.0
+```
+
+---
+
+## v1.0.0 发布
+
+Phase 3 全部完成后发布 v1.0.0。
+
+包含：
+* Phase 1: 集群基础（节点管理、心跳、capability调度、租约、同步、故障恢复）
+* Phase 2: 可观测性（Dashboard、可视化、Metrics、OpenTelemetry）
+* Phase 3: 扩展性（Plugin SDK、动态调度、联邦、WAN）
+
+质量要求：
+- 所有集成测试通过
+- 构建/测试 CI 绿色
+- 双语 README + 完整文档
+- CHANGELOG 覆盖所有版本
 
 ---
 
