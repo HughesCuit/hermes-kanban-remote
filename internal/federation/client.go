@@ -2,6 +2,8 @@ package federation
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +16,9 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// maxResponseSize caps response body reads to prevent OOM from malicious remote clusters.
+const maxResponseSize = 10 << 20 // 10MB
+
 // NewClient creates a new federation HTTP client with sensible defaults.
 func NewClient() *Client {
 	return &Client{
@@ -21,12 +26,6 @@ func NewClient() *Client {
 			Timeout: 10 * time.Second,
 		},
 	}
-}
-
-// PingResponse is the response from a remote cluster's /api/v1/status endpoint.
-type PingResponse struct {
-	Entries  []StatusEntry `json:"entries"`
-	Summary  StatusSummary `json:"summary"`
 }
 
 // StatusEntry represents a single node/task status entry from a remote cluster.
@@ -48,16 +47,19 @@ type StatusSummary struct {
 	CompletedTasks int `json:"completed_tasks"`
 }
 
-// RemoteStatusResponse is the full status response from a remote cluster.
-type RemoteStatusResponse struct {
-	Entries  []StatusEntry `json:"entries"`
-	Summary  StatusSummary `json:"summary"`
+// StatusResponse is the unified status response from a remote cluster.
+// Previously split into PingResponse and RemoteStatusResponse — consolidated
+// to eliminate duplicate struct definitions.
+type StatusResponse struct {
+	Entries []StatusEntry `json:"entries"`
+	Summary StatusSummary `json:"summary"`
 }
 
 // ForwardTaskRequest is the request body for forwarding a task to a remote cluster.
 type ForwardTaskRequest struct {
-	Title    string   `json:"title"`
-	Requires []string `json:"requires"`
+	Title          string   `json:"title"`
+	Requires       []string `json:"requires"`
+	IdempotencyKey string   `json:"idempotency_key,omitempty"`
 }
 
 // ForwardTaskResponse is the response from a remote cluster after forwarding a task.
@@ -67,9 +69,19 @@ type ForwardTaskResponse struct {
 	Status string `json:"status"`
 }
 
+// generateID produces a short random hex string suitable as an idempotency key.
+func generateID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// fallback — should never happen
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
 // Ping checks if a remote cluster is reachable and returns its status.
 // It calls GET /api/v1/status on the remote cluster.
-func (c *Client) Ping(endpoint string) (*PingResponse, time.Duration, error) {
+func (c *Client) Ping(endpoint string) (*StatusResponse, time.Duration, error) {
 	start := time.Now()
 	resp, err := c.httpClient.Get(endpoint + "/api/v1/status")
 	latency := time.Since(start)
@@ -82,8 +94,8 @@ func (c *Client) Ping(endpoint string) (*PingResponse, time.Duration, error) {
 		return nil, latency, fmt.Errorf("ping %s: status %d", endpoint, resp.StatusCode)
 	}
 
-	var result PingResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	var result StatusResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseSize)).Decode(&result); err != nil {
 		return nil, latency, fmt.Errorf("ping %s: decode: %w", endpoint, err)
 	}
 	return &result, latency, nil
@@ -92,8 +104,9 @@ func (c *Client) Ping(endpoint string) (*PingResponse, time.Duration, error) {
 // ForwardTask submits a task to a remote cluster via POST /api/v1/tasks.
 func (c *Client) ForwardTask(endpoint string, title string, requires []string) (*ForwardTaskResponse, error) {
 	reqBody := ForwardTaskRequest{
-		Title:    title,
-		Requires: requires,
+		Title:          title,
+		Requires:       requires,
+		IdempotencyKey: generateID(),
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -111,19 +124,19 @@ func (c *Client) ForwardTask(endpoint string, title string, requires []string) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 		return nil, fmt.Errorf("forward task to %s: status %d: %s", endpoint, resp.StatusCode, string(respBody))
 	}
 
 	var result ForwardTaskResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseSize)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("forward task response: %w", err)
 	}
 	return &result, nil
 }
 
 // QueryStatus queries the status of a remote cluster via GET /api/v1/status.
-func (c *Client) QueryStatus(endpoint string) (*RemoteStatusResponse, error) {
+func (c *Client) QueryStatus(endpoint string) (*StatusResponse, error) {
 	resp, err := c.httpClient.Get(endpoint + "/api/v1/status")
 	if err != nil {
 		return nil, fmt.Errorf("query status %s: %w", endpoint, err)
@@ -134,8 +147,8 @@ func (c *Client) QueryStatus(endpoint string) (*RemoteStatusResponse, error) {
 		return nil, fmt.Errorf("query status %s: status %d", endpoint, resp.StatusCode)
 	}
 
-	var result RemoteStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	var result StatusResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseSize)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("query status decode: %w", err)
 	}
 	return &result, nil

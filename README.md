@@ -3,9 +3,9 @@
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/heventure/hermes-agent-cluster)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.8.0-orange)](https://github.com/heventure/hermes-agent-cluster/releases)
+[![Version](https://img.shields.io/badge/version-v1.0.0-orange)](https://github.com/heventure/hermes-agent-cluster/releases)
 
-**Distributed Cluster Extension for Hermes Agent Kanban** — v0.8.0
+**Distributed Cluster Extension for Hermes Agent Kanban** — v1.0.0
 
 ---
 
@@ -59,6 +59,10 @@ Each node runs independently → HTTP coordination → sync task metadata only
 | 🔭 OpenTelemetry | Distributed tracing (OTLP/gRPC or stdout export) | ✅ Stable |
 | 📈 Prometheus Metrics | `/metrics` endpoint, `hac_` prefixed metric set | ✅ Stable |
 | 💻 Local-first Execution | Each node maintains its own kanban.db, no shared DB | ✅ Stable |
+| 🔌 Plugin SDK | Webhook system for third-party integration with HMAC-SHA256 signing | ✅ Stable |
+| ⚡ Dynamic Scheduler | Priority-based scheduling with load-aware node selection | ✅ Stable |
+| 🌐 Multi-cluster Federation | Cross-cluster collaboration, remote cluster registration, task forwarding | ✅ Stable |
+| 🌍 WAN Cluster | TLS support, configurable heartbeat, auto-reconnect, batch sync | ✅ Stable |
 
 ### ⚡ Quick Start
 
@@ -366,6 +370,10 @@ bash test-e2e.sh
 | 🔭 OpenTelemetry | 分布式追踪（OTLP/gRPC 或 stdout 导出） | ✅ 稳定 |
 | 📈 Prometheus 指标 | `/metrics` 端点，`hac_` 前缀指标集 | ✅ 稳定 |
 | 💻 本地优先执行 | 每个节点维护独立 kanban.db，无需共享数据库 | ✅ 稳定 |
+| 🔌 插件SDK | Webhook系统，支持第三方集成，HMAC-SHA256签名验证 | ✅ 稳定 |
+| ⚡ 动态调度器 | 基于优先级的任务调度，负载感知节点选择 | ✅ 稳定 |
+| 🌐 多集群联邦 | 跨集群协作，远程集群注册，任务转发 | ✅ 稳定 |
+| 🌍 WAN集群 | TLS支持，可配置心跳，自动重连，批量同步 | ✅ 稳定 |
 
 ### ⚡ 快速开始
 

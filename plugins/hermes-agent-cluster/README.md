@@ -1,6 +1,6 @@
 # hermes-agent-cluster
 
-**v0.1.0** — Distributed agent cluster coordination for Hermes Agent.
+**v1.0.0** — Distributed agent cluster coordination for Hermes Agent.
 
 A Hermes Agent plugin that enables multi-node task coordination via the hermes-agent-cluster Go service. Nodes can initialize/join clusters, submit tasks, track progress, and coordinate distributed work across multiple agents.
 

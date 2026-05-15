@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.0.0] - 2026-05-15
+
+### Added / 新增
+- **Plugin SDK (v0.9.0):** Webhook system for third-party integration — register/deregister webhook URLs, HMAC-SHA256 signature verification, automatic retry with exponential backoff / 插件SDK：Webhook系统，支持第三方集成——注册/注销Webhook URL，HMAC-SHA256签名验证，指数退避自动重试
+- **Dynamic Scheduler (v0.10.0):** Priority-based task scheduling with load-aware node selection, scheduling decision recording / 动态调度器：基于优先级的任务调度，负载感知节点选择，调度决策记录
+- **Multi-cluster Federation (v0.11.0):** Cross-cluster collaboration — register remote clusters, forward tasks between clusters, unified status view / 多集群联邦：跨集群协作——注册远程集群，跨集群任务转发，统一状态视图
+- **WAN Cluster (v0.12.0):** TLS support (cert/key config, StartTLS), configurable heartbeat (30s WAN default), auto-reconnect with exponential backoff (1s→60s), batch sync / WAN集群：TLS支持（证书/密钥配置，StartTLS），可配置心跳（WAN默认30s），指数退避自动重连（1s→60s），批量同步
+
+### Changed / 变更
+- All Phase 3 features integrated and tested / Phase 3全部功能已集成并通过测试
+- Updated documentation to reflect v1.0.0 capabilities / 更新文档以反映v1.0.0功能
+
+---
+
 ## [v0.8.0] - 2026-05-10
 
 ### Added / 新增
