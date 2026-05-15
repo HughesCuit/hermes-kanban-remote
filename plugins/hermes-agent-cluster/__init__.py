@@ -7,6 +7,9 @@ Registers tools that let the agent interact with a hermes-agent-cluster cluster:
 - kanban_cluster_nodes: List cluster nodes
 - kanban_cluster_heartbeat: Send heartbeat
 - kanban_cluster_complete: Mark task as completed
+
+Auto-start: When the plugin loads, it automatically starts the cluster service
+if not already running. Configure via plugin config or environment variables.
 """
 
 from __future__ import annotations
@@ -14,7 +17,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
+import signal
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -31,6 +37,100 @@ logger = logging.getLogger(__name__)
 _cluster_config: Dict[str, Any] = {}
 _heartbeat_thread: Optional[threading.Thread] = None
 _heartbeat_stop = threading.Event()
+_auto_start_process: Optional[subprocess.Popen] = None
+_auto_start_lock = threading.Lock()
+
+# Default configuration
+DEFAULT_PORT = 8787
+DEFAULT_CLUSTER_ID = "hermes-cluster"
+DEFAULT_NODE_ID = "node_main"
+DEFAULT_NODE_NAME = "main-node"
+DEFAULT_CAPABILITIES = ["planning", "reviewing", "scheduling"]
+AUTO_START_TIMEOUT = 5  # seconds to wait for cluster to start
+HEALTH_CHECK_TIMEOUT = 2  # seconds for health check request
+
+
+# ---------------------------------------------------------------------------
+# Configuration loading
+# ---------------------------------------------------------------------------
+
+def _get_plugin_config() -> Dict[str, Any]:
+    """Load plugin configuration from environment or config file.
+    
+    Configuration sources (in priority order):
+    1. Environment variables (HERMES_CLUSTER_*)
+    2. Plugin config file (~/.hermes/agent-cluster/plugin.yaml)
+    3. Default values
+    """
+    config = {
+        "auto_start": True,
+        "port": DEFAULT_PORT,
+        "cluster_id": DEFAULT_CLUSTER_ID,
+        "node_id": DEFAULT_NODE_ID,
+        "node_name": DEFAULT_NODE_NAME,
+        "capabilities": DEFAULT_CAPABILITIES,
+        "token": "",
+        "config_path": None,
+        "binary_path": "hermes-cluster",
+    }
+    
+    # Environment overrides
+    env_map = {
+        "HERMES_CLUSTER_AUTO_START": ("auto_start", lambda x: x.lower() in ("true", "1", "yes")),
+        "HERMES_CLUSTER_PORT": ("port", int),
+        "HERMES_CLUSTER_ID": ("cluster_id", str),
+        "HERMES_CLUSTER_NODE_ID": ("node_id", str),
+        "HERMES_CLUSTER_NODE_NAME": ("node_name", str),
+        "HERMES_CLUSTER_TOKEN": ("token", str),
+        "HERMES_CLUSTER_CONFIG": ("config_path", str),
+        "HERMES_CLUSTER_BINARY": ("binary_path", str),
+    }
+    
+    for env_var, (key, converter) in env_map.items():
+        value = os.environ.get(env_var)
+        if value is not None:
+            try:
+                config[key] = converter(value)
+            except (ValueError, TypeError):
+                logger.warning("Invalid value for %s: %s", env_var, value)
+    
+    # Try to load from plugin config file
+    config_dir = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "agent-cluster"
+    plugin_config_path = config_dir / "plugin.yaml"
+    
+    if plugin_config_path.exists():
+        try:
+            import yaml
+            with open(plugin_config_path) as f:
+                plugin_config = yaml.safe_load(f)
+                if isinstance(plugin_config, dict):
+                    # Merge with defaults, env vars take priority
+                    for key, value in plugin_config.items():
+                        if key in config and key not in _get_env_set_keys():
+                            config[key] = value
+        except Exception as e:
+            logger.debug("Failed to load plugin config: %s", e)
+    
+    return config
+
+
+def _get_env_set_keys() -> set:
+    """Return set of config keys that are explicitly set via environment variables."""
+    env_keys = set()
+    env_map = {
+        "HERMES_CLUSTER_AUTO_START": "auto_start",
+        "HERMES_CLUSTER_PORT": "port",
+        "HERMES_CLUSTER_ID": "cluster_id",
+        "HERMES_CLUSTER_NODE_ID": "node_id",
+        "HERMES_CLUSTER_NODE_NAME": "node_name",
+        "HERMES_CLUSTER_TOKEN": "token",
+        "HERMES_CLUSTER_CONFIG": "config_path",
+        "HERMES_CLUSTER_BINARY": "binary_path",
+    }
+    for env_var, key in env_map.items():
+        if os.environ.get(env_var) is not None:
+            env_keys.add(key)
+    return env_keys
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +150,171 @@ def _api_call(base_url: str, method: str, path: str, data: dict = None) -> dict:
         return {"error": str(e)}
     except Exception as e:
         return {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+def _check_cluster_health(base_url: str) -> bool:
+    """Check if cluster is running and healthy."""
+    try:
+        result = _api_call(base_url, "GET", "/api/v1/status")
+        # Cluster is healthy if it responds with a valid status object
+        return "error" not in result and ("summary" in result or "entries" in result)
+    except Exception:
+        return False
+
+
+def _wait_for_cluster(base_url: str, timeout: float = AUTO_START_TIMEOUT) -> bool:
+    """Wait for cluster to become healthy after starting."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _check_cluster_health(base_url):
+            return True
+        time.sleep(0.2)
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Cluster lifecycle
+# ---------------------------------------------------------------------------
+
+def _find_binary(config: Dict[str, Any]) -> Optional[str]:
+    """Find the hermes-cluster binary."""
+    binary_path = config.get("binary_path", "hermes-cluster")
+    
+    # If it's a full path, check it exists
+    if os.path.isabs(binary_path):
+        return binary_path if os.path.isfile(binary_path) else None
+    
+    # Search in PATH
+    return shutil.which(binary_path)
+
+
+def _generate_default_config(config: Dict[str, Any]) -> Path:
+    """Generate a default cluster configuration file."""
+    config_dir = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "agent-cluster"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "cluster.yaml"
+    
+    # Only write if doesn't exist
+    if not config_path.exists():
+        config_content = f"""cluster:
+  id: {config['cluster_id']}
+  role: main
+  token: "{config['token']}"
+
+node:
+  id: {config['node_id']}
+  name: {config['node_name']}
+  capabilities:
+{chr(10).join(f"    - {c}" for c in config['capabilities'])}
+
+server:
+  bind: "0.0.0.0"
+  port: {config['port']}
+
+lease:
+  ttl: 30s
+  scan_rate: 5s
+
+watchdog:
+  check_interval: 3s
+  degraded_after: 10s
+  offline_after: 20s
+"""
+        config_path.write_text(config_content)
+        logger.info("Generated default cluster config at %s", config_path)
+    
+    return config_path
+
+
+def _start_cluster_auto(config: Dict[str, Any]) -> bool:
+    """Auto-start the cluster service if not already running."""
+    global _auto_start_process
+    
+    base_url = f"http://127.0.0.1:{config['port']}"
+    
+    # Check if already running
+    if _check_cluster_health(base_url):
+        logger.info("Cluster already running on port %d", config['port'])
+        _cluster_config["base_url"] = base_url
+        _cluster_config["node_id"] = config["node_id"]
+        _cluster_config["role"] = "main"
+        return True
+    
+    # Find binary
+    binary = _find_binary(config)
+    if not binary:
+        logger.warning("hermes-cluster binary not found, skipping auto-start")
+        return False
+    
+    # Get or generate config file
+    if config.get("config_path"):
+        config_file = Path(config["config_path"])
+        if not config_file.exists():
+            logger.warning("Config file not found: %s", config_file)
+            return False
+    else:
+        config_file = _generate_default_config(config)
+    
+    # Start the process
+    try:
+        with _auto_start_lock:
+            if _auto_start_process is not None and _auto_start_process.poll() is None:
+                logger.info("Cluster process already running (PID %d)", _auto_start_process.pid)
+                return True
+            
+            logger.info("Starting hermes-cluster on port %d...", config['port'])
+            _auto_start_process = subprocess.Popen(
+                [binary, "-config", str(config_file)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
+            )
+        
+        # Wait for cluster to become healthy
+        if _wait_for_cluster(base_url):
+            logger.info("Cluster started successfully (PID %d)", _auto_start_process.pid)
+            _cluster_config["base_url"] = base_url
+            _cluster_config["node_id"] = config["node_id"]
+            _cluster_config["role"] = "main"
+            _cluster_config["process"] = _auto_start_process
+            return True
+        else:
+            logger.error("Cluster failed to start within timeout")
+            _stop_cluster_auto()
+            return False
+            
+    except FileNotFoundError:
+        logger.error("Failed to start cluster: binary not found")
+        return False
+    except Exception as e:
+        logger.error("Failed to start cluster: %s", e)
+        return False
+
+
+def _stop_cluster_auto():
+    """Stop the auto-started cluster process."""
+    global _auto_start_process
+    
+    with _auto_start_lock:
+        if _auto_start_process is not None:
+            try:
+                logger.info("Stopping cluster process (PID %d)...", _auto_start_process.pid)
+                _auto_start_process.terminate()
+                try:
+                    _auto_start_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Cluster process did not terminate gracefully, killing...")
+                    _auto_start_process.kill()
+                    _auto_start_process.wait(timeout=2)
+                logger.info("Cluster process stopped")
+            except Exception as e:
+                logger.warning("Error stopping cluster process: %s", e)
+            finally:
+                _auto_start_process = None
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +606,49 @@ CLUSTER_COMPLETE_SCHEMA = {
 
 
 # ---------------------------------------------------------------------------
+# Hook handlers
+# ---------------------------------------------------------------------------
+
+def _on_session_start(**kwargs) -> None:
+    """Auto-start cluster service when session begins."""
+    config = _get_plugin_config()
+    
+    if not config.get("auto_start", True):
+        logger.debug("Auto-start disabled, skipping cluster startup")
+        return
+    
+    # Run auto-start in a background thread to avoid blocking session start
+    def _start_in_background():
+        try:
+            success = _start_cluster_auto(config)
+            if success:
+                logger.info("Cluster auto-started successfully")
+            else:
+                logger.debug("Cluster auto-start skipped (not running, binary not found, or disabled)")
+        except Exception as e:
+            logger.warning("Cluster auto-start failed: %s", e)
+    
+    thread = threading.Thread(target=_start_in_background, daemon=True, name="cluster-auto-start")
+    thread.start()
+
+
+def _on_session_end(**kwargs) -> None:
+    """Gracefully stop cluster service when session ends."""
+    global _auto_start_process
+    
+    # Stop heartbeat if running
+    _heartbeat_stop.set()
+    if _heartbeat_thread and _heartbeat_thread.is_alive():
+        _heartbeat_thread.join(timeout=2)
+    
+    # Stop auto-started process
+    if _auto_start_process is not None:
+        _stop_cluster_auto()
+    
+    logger.info("Cluster plugin session ended")
+
+
+# ---------------------------------------------------------------------------
 # Plugin registration
 # ---------------------------------------------------------------------------
 
@@ -409,4 +717,8 @@ def register(ctx) -> None:
         emoji="✅",
     )
 
-    logger.info("hermes-agent-cluster plugin registered 7 cluster tools")
+    # Register lifecycle hooks for auto-start
+    ctx.register_hook("on_session_start", _on_session_start)
+    ctx.register_hook("on_session_end", _on_session_end)
+
+    logger.info("hermes-agent-cluster plugin registered 7 cluster tools + auto-start hooks")
