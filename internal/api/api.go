@@ -213,6 +213,9 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]string{"node_id": nodeID, "status": "registered"})
+
+	// Prometheus: record node registration
+	s.updateNodeGauges()
 }
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -226,6 +229,12 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Registry.UpdateHeartbeat(req.NodeID)
 	writeJSON(w, map[string]string{"status": "ok"})
+
+	// Prometheus: record heartbeat + update node gauges
+	if s.PromMetrics != nil {
+		s.PromMetrics.NodeHeartbeatReceived(req.NodeID)
+	}
+	s.updateNodeGauges()
 }
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
@@ -285,6 +294,10 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	s.Scheduler.TriggerPendingTasks()
 	s.Scheduler.SchedulePending()
 	writeJSON(w, task)
+
+	// Prometheus: record task creation + update gauges
+	s.PromMetrics.TaskCreated()
+	s.updateTaskGauges()
 }
 
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
@@ -294,12 +307,20 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
+	// Read task before status change to capture CreatedAt for duration metric
+	task, _ := s.Scheduler.GetTaskStore().Get(taskID)
 	s.Scheduler.GetTaskStore().SetStatus(taskID, scheduler.TaskCompleted)
 	// Auto-transition downstream tasks whose dependencies are now met
 	if s.Resolver != nil {
 		s.Resolver.OnDependencyComplete(taskID)
 	}
 	writeJSON(w, map[string]string{"status": "completed"})
+
+	// Prometheus: record task completion + update gauges
+	if s.PromMetrics != nil && task != nil {
+		s.PromMetrics.TaskCompleted(task.CreatedAt)
+	}
+	s.updateTaskGauges()
 }
 
 // --- Task Failure handler ---
@@ -317,6 +338,8 @@ func (s *Server) handleFailTask(w http.ResponseWriter, r *http.Request) {
 		req.Reason = "failed"
 	}
 	store := s.Scheduler.GetTaskStore()
+	// Read task before status change to capture CreatedAt for duration metric
+	task, _ := store.Get(taskID)
 	if err := store.SetStatus(taskID, scheduler.TaskFailed); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -330,6 +353,12 @@ func (s *Server) handleFailTask(w http.ResponseWriter, r *http.Request) {
 		"status":  "failed",
 		"blocked": blocked,
 	})
+
+	// Prometheus: record task failure + update gauges
+	if s.PromMetrics != nil && task != nil {
+		s.PromMetrics.TaskFailed(task.CreatedAt)
+	}
+	s.updateTaskGauges()
 }
 
 // --- Task Unblock handler ---
@@ -378,6 +407,12 @@ func (s *Server) handleCreateLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, l)
+
+	// Prometheus: record lease creation + update active count
+	if s.PromMetrics != nil {
+		s.PromMetrics.LeaseCreated(time.Duration(req.TTL) * time.Second)
+		s.updateLeaseGauges()
+	}
 }
 
 func (s *Server) handleRevokeLease(w http.ResponseWriter, r *http.Request) {
@@ -387,6 +422,12 @@ func (s *Server) handleRevokeLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"status": "revoked"})
+
+	// Prometheus: record lease revocation + update active count
+	if s.PromMetrics != nil {
+		s.PromMetrics.LeaseRevoked()
+		s.updateLeaseGauges()
+	}
 }
 
 func (s *Server) handleListLeases(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +446,9 @@ func (s *Server) handleSyncReceive(w http.ResponseWriter, r *http.Request) {
 	}
 	applied := s.Receiver.HandleSyncMessage(msg)
 	writeJSON(w, map[string]bool{"applied": applied})
+
+	// Prometheus: update sync version gauge
+	s.updateSyncGauge()
 }
 
 func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
@@ -575,6 +619,47 @@ func (s *Server) handleClusterViz(w http.ResponseWriter, r *http.Request) {
 // ListenAndServe starts the server on the given address.
 func (s *Server) ListenAndServe(addr string) error {
 	return http.ListenAndServe(addr, s.Router)
+}
+
+// --- Metrics helpers ---
+
+// updateNodeGauges refreshes node count gauges from the registry.
+func (s *Server) updateNodeGauges() {
+	if s.PromMetrics == nil {
+		return
+	}
+	s.PromMetrics.NodeRegistered(s.Registry.OnlineCount(), s.Registry.Count())
+}
+
+// updateTaskGauges refreshes task status count gauges from the task store.
+func (s *Server) updateTaskGauges() {
+	if s.PromMetrics == nil {
+		return
+	}
+	tasks := s.Scheduler.GetTaskStore().GetAll()
+	statusCounts := make(map[string]float64)
+	for _, t := range tasks {
+		statusCounts[string(t.Status)]++
+	}
+	for status, count := range statusCounts {
+		s.PromMetrics.TaskStatusUpdate(status, count)
+	}
+}
+
+// updateLeaseGauges refreshes active lease count gauge from the lease manager.
+func (s *Server) updateLeaseGauges() {
+	if s.PromMetrics == nil {
+		return
+	}
+	s.PromMetrics.LeasesActiveUpdate(float64(len(s.LeaseMgr.GetActiveLeases())))
+}
+
+// updateSyncGauge refreshes the sync version gauge.
+func (s *Server) updateSyncGauge() {
+	if s.PromMetrics == nil {
+		return
+	}
+	s.PromMetrics.SyncVersionUpdate(float64(s.StateStore.Version()))
 }
 
 // --- Status handler ---
