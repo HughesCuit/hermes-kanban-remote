@@ -27,3 +27,8 @@ type TaskSync struct {
 	AssignedTo string `json:"assigned_to,omitempty"`
 	Version    int64  `json:"version"`
 }
+
+// BatchSyncMessage wraps multiple SyncMessages for efficient batch transfer.
+type BatchSyncMessage struct {
+	Messages []SyncMessage `json:"messages"`
+}
