@@ -124,20 +124,55 @@ func main() {
 		},
 	)
 
+	// --- Prometheus metrics (always enabled, scraped at /metrics) ---
+	promMetrics := metrics.New()
+	log.Printf("prometheus metrics registered at /metrics")
+
 	// --- Lease expiry callback: triggers recovery on lease expiry ---
 	leaseMgr.SetExpiryCallback(func(taskID, nodeID string) {
 		log.Printf("lease expired: task=%s node=%s", taskID, nodeID)
 		// Mark node as offline in registry so scheduler won't pick it again
 		registry.UpdateStatus(nodeID, cluster.NodeOffline)
 		detector.NotifyOffline(nodeID)
+
+		// Prometheus: record lease expiry + update active count
+		promMetrics.LeaseExpired()
+		promMetrics.LeasesActiveUpdate(float64(len(leaseMgr.GetActiveLeases())))
 	})
 
 	// --- Cluster visualization ---
 	clusterView := visualization.NewClusterView(registry, taskStore, leaseMgr, recLog, resolver)
 
-	// --- Prometheus metrics (always enabled, scraped at /metrics) ---
-	promMetrics := metrics.New()
-	log.Printf("prometheus metrics registered at /metrics")
+	// --- Stop channel for background services ---
+	stopCh := make(chan struct{})
+
+	// --- Periodic gauge updater: snapshot task/node/lease/sync gauges ---
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				// Task status counts
+				tasks := taskStore.GetAll()
+				statusCounts := make(map[string]float64)
+				for _, t := range tasks {
+					statusCounts[string(t.Status)]++
+				}
+				for status, count := range statusCounts {
+					promMetrics.TaskStatusUpdate(status, count)
+				}
+				// Node counts
+				promMetrics.NodeRegistered(registry.OnlineCount(), registry.Count())
+				// Active lease count
+				promMetrics.LeasesActiveUpdate(float64(len(leaseMgr.GetActiveLeases())))
+				// Sync version
+				promMetrics.SyncVersionUpdate(float64(stateStore.Version()))
+			case <-stopCh:
+				return
+			}
+		}
+	}()
 
 	// --- Build API server ---
 	server := api.NewServer(
@@ -156,8 +191,6 @@ func main() {
 	)
 
 	// --- Start background services ---
-	stopCh := make(chan struct{})
-
 	// Start lease expiry scanner
 	leaseMgr.StartExpiryScanner(cfg.Lease.ScanRate, stopCh)
 

@@ -296,7 +296,9 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, task)
 
 	// Prometheus: record task creation + update gauges
-	s.PromMetrics.TaskCreated()
+	if s.PromMetrics != nil {
+		s.PromMetrics.TaskCreated()
+	}
 	s.updateTaskGauges()
 }
 
