@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes Agent Cluster — Dashboard</title>
+<style>
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --border: #30363d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --orange: #db6d28;
+  --purple: #bc8cff;
+  --radius: 8px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+.header {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header h1 .logo {
+  color: var(--accent);
+  font-size: 22px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.refresh-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.refresh-badge .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* Summary Cards */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+.card-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.card-value {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.card-value.green { color: var(--green); }
+.card-value.red { color: var(--red); }
+.card-value.yellow { color: var(--yellow); }
+.card-value.blue { color: var(--accent); }
+.card-value.purple { color: var(--purple); }
+
+/* Section */
+.section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+
+.section-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Node Topology */
+.topology-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  padding: 20px;
+}
+
+.node-card {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  position: relative;
+}
+
+.node-card::before {
+  content: '';
+  position: absolute;
+  top: 16px;
+  left: 0;
+  width: 3px;
+  height: calc(100% - 32px);
+  border-radius: 0 2px 2px 0;
+}
+
+.node-card.online::before { background: var(--green); }
+.node-card.degraded::before { background: var(--yellow); }
+.node-card.offline::before { background: var(--red); }
+
+.node-name {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-name .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.node-card.online .status-dot { background: var(--green); }
+.node-card.degraded .status-dot { background: var(--yellow); }
+.node-card.offline .status-dot { background: var(--red); }
+
+.node-id {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: monospace;
+  margin-bottom: 12px;
+}
+
+.cap-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.cap-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+}
+
+.node-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.load-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-primary);
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.load-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+.load-bar-fill.low { background: var(--green); }
+.load-bar-fill.medium { background: var(--yellow); }
+.load-bar-fill.high { background: var(--red); }
+
+/* Task Table */
+.task-table-wrap {
+  overflow-x: auto;
+}
+
+.task-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.task-table th {
+  text-align: left;
+  padding: 10px 16px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+
+.task-table td {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.task-table tbody tr:hover {
+  background: rgba(88, 166, 255, 0.05);
+}
+
+.task-table .task-id {
+  font-family: monospace;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.ready { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+.status-badge.assigned { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+.status-badge.running { background: rgba(188, 140, 255, 0.15); color: var(--purple); }
+.status-badge.completed { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+.status-badge.failed { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+.status-badge.blocked { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+.status-badge.pending { background: rgba(110, 118, 129, 0.15); color: var(--text-secondary); }
+
+.dep-list {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Dependency Graph (SVG) */
+.graph-container {
+  padding: 20px;
+  overflow: auto;
+  min-height: 200px;
+}
+
+.graph-container svg {
+  width: 100%;
+  min-height: 200px;
+}
+
+.graph-container .empty-state {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* Two-column layout */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 900px) {
+  .two-col { grid-template-columns: 1fr; }
+}
+
+/* Filter bar */
+.filter-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.filter-bar select,
+.filter-bar input {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.filter-bar select:focus,
+.filter-bar input:focus {
+  border-color: var(--accent);
+}
+
+/* Recovery stats */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  padding: 20px;
+}
+
+.stat-item {
+  text-align: center;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+/* Empty states */
+.empty-msg {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* Error banner */
+.error-banner {
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  color: var(--red);
+  font-size: 13px;
+  display: none;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span class="logo">&#9651;</span> Hermes Agent Cluster</h1>
+  <div class="header-right">
+    <div class="refresh-badge">
+      <span class="dot"></span>
+      <span id="refresh-timer">Auto-refresh 5s</span>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="error-banner" id="error-banner"></div>
+
+  <!-- Summary Cards -->
+  <div class="summary-grid" id="summary-grid">
+    <div class="card">
+      <div class="card-label">Total Nodes</div>
+      <div class="card-value blue" id="s-total-nodes">-</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Online Nodes</div>
+      <div class="card-value green" id="s-online-nodes">-</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Total Tasks</div>
+      <div class="card-value blue" id="s-total-tasks">-</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Active Leases</div>
+      <div class="card-value purple" id="s-active-leases">-</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Tasks Running</div>
+      <div class="card-value yellow" id="s-tasks-running">-</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Tasks Completed</div>
+      <div class="card-value green" id="s-tasks-completed">-</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Tasks Failed</div>
+      <div class="card-value red" id="s-tasks-failed">-</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Tasks Blocked</div>
+      <div class="card-value yellow" id="s-tasks-blocked">-</div>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <!-- Left: Node Topology -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Cluster Nodes</span>
+        <span id="node-count" style="font-size:12px;color:var(--text-muted)"></span>
+      </div>
+      <div class="topology-grid" id="node-grid">
+        <div class="empty-msg">No nodes registered</div>
+      </div>
+    </div>
+
+    <!-- Right: Dependency Graph -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Workflow Graph</span>
+      </div>
+      <div class="graph-container" id="graph-container">
+        <div class="empty-state">No dependencies defined</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Task Status Table -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Task Status</span>
+    </div>
+    <div class="filter-bar">
+      <select id="filter-status" onchange="refresh()">
+        <option value="">All Statuses</option>
+        <option value="pending">Pending</option>
+        <option value="ready">Ready</option>
+        <option value="assigned">Assigned</option>
+        <option value="running">Running</option>
+        <option value="completed">Completed</option>
+        <option value="failed">Failed</option>
+        <option value="blocked">Blocked</option>
+      </select>
+      <input type="text" id="filter-node" placeholder="Filter by node..." oninput="refresh()">
+    </div>
+    <div class="task-table-wrap">
+      <table class="task-table">
+        <thead>
+          <tr>
+            <th>Task ID</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Assigned To</th>
+            <th>Requires</th>
+            <th>Dependencies</th>
+            <th>Fail Reason</th>
+          </tr>
+        </thead>
+        <tbody id="task-tbody">
+          <tr><td colspan="7" class="empty-msg">No tasks</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Recovery Stats -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Recovery Statistics</span>
+    </div>
+    <div class="stats-grid" id="recovery-stats">
+      <div class="stat-item">
+        <div class="stat-value" id="r-total">0</div>
+        <div class="stat-label">Total Events</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value" id="r-revoked">0</div>
+        <div class="stat-label">Leases Revoked</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value" id="r-rescheduled">0</div>
+        <div class="stat-label">Tasks Rescheduled</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value" id="r-sync-version">0</div>
+        <div class="stat-label">Sync Version</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/api/v1';
+let refreshInterval = null;
+
+async function fetchJSON(path) {
+  try {
+    const res = await fetch(API + path);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    showError(`Failed to fetch ${path}: ${e.message}`);
+    return null;
+  }
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 5000);
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+function timeAgo(ts) {
+  if (!ts) return '-';
+  const diff = Date.now() - new Date(ts).getTime();
+  if (diff < 60000) return Math.round(diff / 1000) + 's ago';
+  if (diff < 3600000) return Math.round(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.round(diff / 3600000) + 'h ago';
+  return Math.round(diff / 86400000) + 'd ago';
+}
+
+function loadClass(load) {
+  if (load < 0.5) return 'low';
+  if (load < 0.8) return 'medium';
+  return 'high';
+}
+
+// --- Render: Summary ---
+function renderSummary(data) {
+  if (!data || !data.summary) return;
+  const s = data.summary;
+  document.getElementById('s-total-nodes').textContent = s.total_nodes || 0;
+  document.getElementById('s-online-nodes').textContent = s.online_nodes || 0;
+  document.getElementById('s-total-tasks').textContent = s.total_tasks || 0;
+  document.getElementById('s-active-leases').textContent = s.active_leases || 0;
+
+  const byStatus = s.tasks_by_status || {};
+  document.getElementById('s-tasks-running').textContent = (byStatus.running || 0) + (byStatus.assigned || 0);
+  document.getElementById('s-tasks-completed').textContent = byStatus.completed || 0;
+  document.getElementById('s-tasks-failed').textContent = byStatus.failed || 0;
+  document.getElementById('s-tasks-blocked').textContent = byStatus.blocked || 0;
+}
+
+// --- Render: Nodes ---
+function renderNodes(nodes) {
+  const grid = document.getElementById('node-grid');
+  if (!nodes || nodes.length === 0) {
+    grid.innerHTML = '<div class="empty-msg">No nodes registered</div>';
+    document.getElementById('node-count').textContent = '';
+    return;
+  }
+  document.getElementById('node-count').textContent = nodes.length + ' node(s)';
+
+  grid.innerHTML = nodes.map(n => `
+    <div class="node-card ${n.status}">
+      <div class="node-name">
+        <span class="status-dot"></span>
+        ${esc(n.name)}
+      </div>
+      <div class="node-id">${esc(n.id)}</div>
+      <div class="cap-tags">
+        ${(n.capabilities || []).map(c => `<span class="cap-tag">${esc(c)}</span>`).join('')}
+      </div>
+      <div class="node-meta">
+        <span>${esc(n.status)}</span>
+        <span>Last heartbeat: ${timeAgo(n.last_heartbeat)}</span>
+      </div>
+      <div class="load-bar">
+        <div class="load-bar-fill ${loadClass(n.load || 0)}" style="width: ${Math.round((n.load || 0) * 100)}%"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// --- Render: Tasks ---
+function renderTasks(entries) {
+  const tbody = document.getElementById('task-tbody');
+  const filterStatus = document.getElementById('filter-status').value;
+  const filterNode = document.getElementById('filter-node').value.toLowerCase();
+
+  let filtered = entries || [];
+  if (filterStatus) {
+    filtered = filtered.filter(e => e.task_status === filterStatus);
+  }
+  if (filterNode) {
+    filtered = filtered.filter(e =>
+      (e.node_id && e.node_id.toLowerCase().includes(filterNode)) ||
+      (e.node_name && e.node_name.toLowerCase().includes(filterNode))
+    );
+  }
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">No tasks match filters</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(e => `
+    <tr>
+      <td class="task-id">${esc(e.task_id)}</td>
+      <td>${esc(e.task_title)}</td>
+      <td><span class="status-badge ${e.task_status}">${esc(e.task_status)}</span></td>
+      <td>${e.node_name ? esc(e.node_name) : '<span style="color:var(--text-muted)">-</span>'}</td>
+      <td class="dep-list">${(e.requires || []).join(', ') || '-'}</td>
+      <td class="dep-list">${esc(e.task_id)}</td>
+      <td style="color:var(--red)">${e.fail_reason ? esc(e.fail_reason) : ''}</td>
+    </tr>
+  `).join('');
+}
+
+// --- Render: Dependency Graph ---
+function renderGraph(graph) {
+  const container = document.getElementById('graph-container');
+  if (!graph || !graph.nodes || graph.nodes.length === 0) {
+    container.innerHTML = '<div class="empty-state">No dependencies defined</div>';
+    return;
+  }
+
+  const nodes = graph.nodes;
+  const edges = graph.edges || [];
+
+  // Layout: simple layered approach based on topological order
+  const nodeMap = {};
+  nodes.forEach((n, i) => { nodeMap[n.id] = { ...n, idx: i }; });
+
+  // Assign layers using BFS from nodes with no incoming edges
+  const incoming = {};
+  const outgoing = {};
+  nodes.forEach(n => { incoming[n.id] = 0; outgoing[n.id] = []; });
+  edges.forEach(e => {
+    incoming[e.to] = (incoming[e.to] || 0) + 1;
+    outgoing[e.from] = outgoing[e.from] || [];
+    outgoing[e.from].push(e.to);
+  });
+
+  const layers = {};
+  const queue = nodes.filter(n => incoming[n.id] === 0).map(n => n.id);
+  queue.forEach(id => { layers[id] = 0; });
+
+  while (queue.length > 0) {
+    const id = queue.shift();
+    for (const next of (outgoing[id] || [])) {
+      const newLayer = layers[id] + 1;
+      if (layers[next] === undefined || newLayer > layers[next]) {
+        layers[next] = newLayer;
+        queue.push(next);
+      }
+    }
+  }
+  // Assign unvisited nodes
+  nodes.forEach(n => {
+    if (layers[n.id] === undefined) layers[n.id] = 0;
+  });
+
+  // Group by layer
+  const layerGroups = {};
+  nodes.forEach(n => {
+    const l = layers[n.id];
+    if (!layerGroups[l]) layerGroups[l] = [];
+    layerGroups[l].push(n);
+  });
+
+  const maxLayer = Math.max(...Object.keys(layerGroups).map(Number), 0);
+  const layerKeys = [];
+  for (let i = 0; i <= maxLayer; i++) layerKeys.push(i);
+
+  const nodeW = 140, nodeH = 50, padX = 40, padY = 30;
+  const colW = nodeW + padX;
+
+  // Compute positions
+  const pos = {};
+  layerKeys.forEach(layer => {
+    const group = layerGroups[layer] || [];
+    group.forEach((n, row) => {
+      pos[n.id] = {
+        x: padX + layer * colW,
+        y: padY + row * (nodeH + 20)
+      };
+    });
+  });
+
+  const maxRow = Math.max(...Object.values(pos).map(p => p.y), 0);
+  const svgW = padX * 2 + (maxLayer + 1) * colW;
+  const svgH = maxRow + nodeH + padY * 2;
+
+  const statusColor = {
+    ready: '#3fb950',
+    assigned: '#58a6ff',
+    running: '#bc8cff',
+    completed: '#3fb950',
+    failed: '#f85149',
+    blocked: '#d29922',
+    pending: '#6e7681'
+  };
+
+  let svg = `<svg viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">`;
+
+  // Draw edges
+  edges.forEach(e => {
+    const from = pos[e.from];
+    const to = pos[e.to];
+    if (!from || !to) return;
+    const x1 = from.x + nodeW;
+    const y1 = from.y + nodeH / 2;
+    const x2 = to.x;
+    const y2 = to.y + nodeH / 2;
+    const cx = (x1 + x2) / 2;
+    svg += `<path d="M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}" fill="none" stroke="#30363d" stroke-width="2" marker-end="url(#arrow)"/>`;
+  });
+
+  // Arrow marker
+  svg += `<defs><marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#30363d"/></marker></defs>`;
+
+  // Draw nodes
+  nodes.forEach(n => {
+    const p = pos[n.id];
+    const color = statusColor[n.status] || '#6e7681';
+    const label = n.title.length > 16 ? n.title.substring(0, 15) + '...' : n.title;
+    svg += `<rect x="${p.x}" y="${p.y}" width="${nodeW}" height="${nodeH}" rx="6" fill="#161b22" stroke="${color}" stroke-width="2"/>`;
+    svg += `<text x="${p.x + nodeW/2}" y="${p.y + 20}" text-anchor="middle" fill="${color}" font-size="11" font-weight="600">${esc(label)}</text>`;
+    svg += `<text x="${p.x + nodeW/2}" y="${p.y + 36}" text-anchor="middle" fill="#6e7681" font-size="9">${esc(n.status)}</text>`;
+  });
+
+  svg += '</svg>';
+  container.innerHTML = svg;
+}
+
+// --- Render: Recovery ---
+function renderRecovery(stats) {
+  if (!stats) return;
+  document.getElementById('r-total').textContent = stats.total_events || 0;
+  document.getElementById('r-revoked').textContent = stats.leases_revoked || 0;
+  document.getElementById('r-rescheduled').textContent = stats.tasks_rescheduled || 0;
+}
+
+// --- Main refresh ---
+async function refresh() {
+  const [statusRes, nodesRes, graphRes, recoveryRes, syncRes] = await Promise.all([
+    fetchJSON('/status'),
+    fetchJSON('/nodes'),
+    fetchJSON('/workflow/graph'),
+    fetchJSON('/recovery/stats'),
+    fetchJSON('/sync/status'),
+  ]);
+
+  renderSummary(statusRes);
+  renderNodes(nodesRes);
+  if (statusRes) renderTasks(statusRes.entries);
+  renderGraph(graphRes);
+  renderRecovery(recoveryRes);
+  if (syncRes) {
+    document.getElementById('r-sync-version').textContent = syncRes.version || 0;
+  }
+}
+
+// --- Init ---
+function init() {
+  refresh();
+  refreshInterval = setInterval(refresh, 5000);
+}
+
+window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

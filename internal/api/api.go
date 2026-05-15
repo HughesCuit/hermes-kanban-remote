@@ -4,17 +4,21 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/heventure/hermes-agent-cluster/internal/cluster"
+	"github.com/heventure/hermes-agent-cluster/internal/dashboard"
 	"github.com/heventure/hermes-agent-cluster/internal/lease"
 	"github.com/heventure/hermes-agent-cluster/internal/recovery"
 	"github.com/heventure/hermes-agent-cluster/internal/scheduler"
 	"github.com/heventure/hermes-agent-cluster/internal/status"
 	"github.com/heventure/hermes-agent-cluster/internal/sync"
+	"github.com/heventure/hermes-agent-cluster/internal/telemetry"
+	"github.com/heventure/hermes-agent-cluster/internal/visualization"
 	"github.com/heventure/hermes-agent-cluster/internal/workflow"
 )
 
@@ -22,17 +26,19 @@ const maxBodySize = 1 << 20 // 1MB
 
 // Server holds all dependencies for the API.
 type Server struct {
-	Router     *chi.Mux
-	Registry   *cluster.Registry
-	Scheduler  *scheduler.Scheduler
-	LeaseMgr   *lease.Manager
-	Recovery   *recovery.Detector
-	Log        *recovery.Log
-	StateStore *sync.StateStore
-	Receiver   *sync.FollowerReceiver
-	LeaderSync *sync.LeaderSync
-	StatusView *status.StatusView
-	Resolver   *workflow.Resolver
+	Router      *chi.Mux
+	Registry    *cluster.Registry
+	Scheduler   *scheduler.Scheduler
+	LeaseMgr    *lease.Manager
+	Recovery    *recovery.Detector
+	Log         *recovery.Log
+	StateStore  *sync.StateStore
+	Receiver    *sync.FollowerReceiver
+	LeaderSync  *sync.LeaderSync
+	StatusView  *status.StatusView
+	Resolver    *workflow.Resolver
+	ClusterView *visualization.ClusterView
+	Metrics     *telemetry.Metrics
 }
 
 // NewServer creates a new API server.
@@ -46,23 +52,30 @@ func NewServer(
 	receiver *sync.FollowerReceiver,
 	leaderSync *sync.LeaderSync,
 	resolver *workflow.Resolver,
+	clusterView *visualization.ClusterView,
+	metrics *telemetry.Metrics,
 ) *Server {
 	sv := status.NewStatusView(registry, sched.GetTaskStore(), leaseMgr)
 	s := &Server{
-		Router:     chi.NewRouter(),
-		Registry:   registry,
-		Scheduler:  sched,
-		LeaseMgr:   leaseMgr,
-		Recovery:   detector,
-		Log:        recLog,
-		StateStore: stateStore,
-		Receiver:   receiver,
-		LeaderSync: leaderSync,
-		StatusView: sv,
-		Resolver:   resolver,
+		Router:      chi.NewRouter(),
+		Registry:    registry,
+		Scheduler:   sched,
+		LeaseMgr:    leaseMgr,
+		Recovery:    detector,
+		Log:         recLog,
+		StateStore:  stateStore,
+		Receiver:    receiver,
+		LeaderSync:  leaderSync,
+		StatusView:  sv,
+		Resolver:    resolver,
+		ClusterView: clusterView,
+		Metrics:     metrics,
 	}
 	s.Router.Use(middleware.Logger)
 	s.Router.Use(middleware.Recoverer)
+	if metrics != nil {
+		s.Router.Use(telemetry.Middleware(metrics))
+	}
 	s.setupRoutes()
 	return s
 }
@@ -108,6 +121,19 @@ func (s *Server) setupRoutes() {
 
 		// Global status view
 		r.Get("/status", s.handleStatus)
+
+		// Cluster visualization
+		r.Get("/cluster/topology", s.handleClusterTopology)
+		r.Get("/cluster/metrics", s.handleClusterMetrics)
+		r.Get("/cluster/timeline", s.handleClusterTimeline)
+		r.Get("/cluster/viz", s.handleClusterViz)
+	})
+
+	// Serve the Web Dashboard at /dashboard/
+	s.Router.Handle("/dashboard/*", http.StripPrefix("/dashboard/", dashboard.Handler()))
+	// Redirect bare /dashboard to /dashboard/
+	s.Router.Get("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard/", http.StatusMovedPermanently)
 	})
 }
 
@@ -459,6 +485,43 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	graph := s.Resolver.GetGraph()
 	writeJSON(w, graph)
+}
+
+// --- Cluster Visualization handlers ---
+
+func (s *Server) handleClusterTopology(w http.ResponseWriter, r *http.Request) {
+	topology := s.ClusterView.GetTopology()
+	writeJSON(w, topology)
+}
+
+func (s *Server) handleClusterMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics := s.ClusterView.GetMetrics()
+	writeJSON(w, metrics)
+}
+
+func (s *Server) handleClusterTimeline(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	timeline := s.ClusterView.GetTimeline(limit)
+	writeJSON(w, timeline)
+}
+
+func (s *Server) handleClusterViz(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	writeJSON(w, map[string]interface{}{
+		"topology": s.ClusterView.GetTopology(),
+		"metrics":  s.ClusterView.GetMetrics(),
+		"timeline": s.ClusterView.GetTimeline(limit),
+	})
 }
 
 // ListenAndServe starts the server on the given address.
