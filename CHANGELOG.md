@@ -16,6 +16,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v3.0.0] - 2026-05-17
+
+### Added / 新增
+- **Python Data Models (T1):** 79 Pydantic v2 classes ported from 74 Go structs, 15 SQLite tables + 3 views, 90 tests / Python数据模型：79个Pydantic v2类从74个Go结构体移植，15个SQLite表+3个视图，90个测试
+- **E2E Regression Test Suite (T13):** 71 tests (67 endpoint + 4 integration) covering all 48 API endpoints / 端到端回归测试套件：71个测试覆盖全部48个API端点
+- **React Dashboard (T12):** Single-file web UI (696 lines) for all 48 cluster API endpoints with dark theme / React仪表盘：单文件Web UI覆盖全部48个集群API端点
+
+### Changed / 变更
+- Major version bump to v3.0.0 reflecting full-stack Go + Python architecture / 主版本号升至v3.0.0，反映Go+Python全栈架构
+- CHANGELOG backfilled with v1.2.0 and v1.2.1 entries / CHANGELOG回填v1.2.0和v1.2.1条目
+
+---
+
+## [v1.2.1] - 2026-05-17
+
+### Added / 新增
+- **Config API endpoints:** `GET /api/v1/config`, `POST /api/v1/config/validate`, `POST /api/v1/config/yaml`, `POST /api/v1/config/restart` / Config API端点：config、validate、yaml、restart
+- **Dashboard Config page:** Web UI for viewing and editing cluster configuration / Dashboard Config页面：查看和编辑集群配置的Web UI
+- **CI release workflow:** GitHub Actions workflow to build multi-platform binaries on tag push / CI发布工作流：标签推送时自动构建多平台二进制文件
+
+### Fixed / 修复
+- Added missing config/validate, config/yaml, config/restart endpoint handlers / 补充缺失的config/validate、config/yaml、config/restart端点处理
+
+---
+
+## [v1.2.0] - 2026-05-16
+
+### Added / 新增
+- **Priority-based scheduling:** Load-aware node selection with scheduling decision recording / 基于优先级的调度：负载感知节点选择，调度决策记录
+- **Plugin auto-start:** Cluster service lifecycle hooks — `on_session_start` auto-starts, `on_session_end` graceful shutdown / 插件自动启动：集群服务生命周期钩子
+- **Dashboard guide page:** In-app usage guide for cluster operators / Dashboard引导页面：集群操作员的使用指南
+
+### Changed / 变更
+- Scheduler now records decisions for audit trail / 调度器现记录决策以供审计
+
+---
+
 ## [v1.1.0] - 2026-05-15
 
 ### Added / 新增

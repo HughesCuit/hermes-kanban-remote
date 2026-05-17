@@ -3,9 +3,9 @@
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/heventure/hermes-agent-cluster)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v1.1.0-orange)](https://github.com/heventure/hermes-agent-cluster/releases)
+[![Version](https://img.shields.io/badge/version-v3.0.0-orange)](https://github.com/heventure/hermes-agent-cluster/releases)
 
-**Distributed Cluster Extension for Hermes Agent Kanban** — v1.1.0
+**Distributed Cluster Extension for Hermes Agent Kanban** — v3.0.0
 
 ---
 
