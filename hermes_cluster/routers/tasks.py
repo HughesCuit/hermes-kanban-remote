@@ -6,6 +6,8 @@ from ..models import (
     SubmitTaskRequest,
     FailTaskRequest,
     SetDependenciesRequest,
+    ClaimTaskRequest,
+    ReleaseTaskRequest,
     Task,
     TaskStatus,
 )
@@ -136,3 +138,47 @@ def _trigger_downstream(task_id: str):
             _state.set_task_status(dep_id, TaskStatus.ready)
     # Then schedule any newly ready tasks
     _state.schedule_pending()
+
+
+@router.post("/{task_id}/claim")
+async def claim_task(task_id: str, req: ClaimTaskRequest):
+    """Worker claims a task."""
+    task = _state.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+    if task.status != TaskStatus.ready:
+        raise HTTPException(status_code=409, detail=f"task is not claimable (status={task.status.value})")
+    if task.assigned_to is not None:
+        raise HTTPException(status_code=409, detail="task is already claimed")
+    _state.set_task_status(task_id, TaskStatus.running)
+    # Set assigned_to directly via task object
+    with _state._tasks_lock:
+        t = _state._tasks[task_id]
+        t.assigned_to = req.node_id
+        t.updated_at = __import__("datetime").datetime.utcnow()
+        t.version += 1
+    claimed_task = _state.get_task(task_id)
+    return {
+        **claimed_task.model_dump(),
+        "claimed_at": claimed_task.updated_at.isoformat(),
+    }
+
+
+@router.post("/{task_id}/release")
+async def release_task(task_id: str, req: ReleaseTaskRequest):
+    """Worker releases a claimed task."""
+    task = _state.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+    if task.assigned_to != req.node_id:
+        raise HTTPException(status_code=403, detail="task is not assigned to this node")
+    _state.set_task_status(task_id, TaskStatus.ready)
+    with _state._tasks_lock:
+        t = _state._tasks[task_id]
+        t.assigned_to = None
+        t.updated_at = __import__("datetime").datetime.utcnow()
+        t.version += 1
+        if req.reason:
+            t.fail_reason = req.reason
+    released_task = _state.get_task(task_id)
+    return released_task.model_dump()

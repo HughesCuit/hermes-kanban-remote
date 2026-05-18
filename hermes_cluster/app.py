@@ -33,6 +33,7 @@ from .routers import (
     config_router,
     visualization_router,
     setup_router,
+    cluster_router,
 )
 from .routers import nodes as nodes_mod
 from .routers import tasks as tasks_mod
@@ -47,6 +48,7 @@ from .routers import status as status_mod
 from .routers import config as config_mod
 from .routers import visualization as visualization_mod
 from .routers import setup as setup_mod
+from .routers import cluster as cluster_mod
 
 
 def create_app(
@@ -108,6 +110,7 @@ def create_app(
     status_mod.init(state)
     config_mod.init(state)
     visualization_mod.init(state)
+    cluster_mod.init(state)
 
     # Register routers
     app.include_router(nodes_router)
@@ -123,6 +126,7 @@ def create_app(
     app.include_router(config_router)
     app.include_router(visualization_router)
     app.include_router(setup_router)
+    app.include_router(cluster_router)
 
     # Health endpoint (outside /api/v1)
     @app.get("/health")

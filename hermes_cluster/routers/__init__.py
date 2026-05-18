@@ -14,6 +14,8 @@ from .config import router as config_router
 from .visualization import router as visualization_router
 from .setup import router as setup_router
 
+from .cluster import router as cluster_router
+
 __all__ = [
     "nodes_router",
     "tasks_router",
@@ -28,4 +30,5 @@ __all__ = [
     "config_router",
     "visualization_router",
     "setup_router",
+    "cluster_router",
 ]

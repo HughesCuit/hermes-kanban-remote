@@ -16,9 +16,27 @@ def init(state: ClusterState):
 
 @router.post("/trigger")
 async def schedule_trigger():
+    """Trigger scheduler to assign ready tasks to idle nodes."""
     promoted = _state.trigger_pending_tasks()
     scheduled = _state.schedule_pending()
-    return {"promoted": promoted, "scheduled": scheduled}
+
+    # Build list of current assignments (tasks that are running with an assigned node)
+    assignments = []
+    tasks = _state.get_all_tasks()
+    for task in tasks:
+        if task.status.value == "running" and task.assigned_to:
+            assignments.append({
+                "task_id": task.id,
+                "task_title": task.title,
+                "node_id": task.assigned_to,
+                "priority": task.priority,
+            })
+
+    return {
+        "promoted": promoted,
+        "scheduled": scheduled,
+        "assignments": assignments,
+    }
 
 
 @router.get("/stats")

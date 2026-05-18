@@ -718,6 +718,15 @@ class RegisterHookRequest(BaseModel):
     secret: Optional[str] = None
 
 
+class ClaimTaskRequest(BaseModel):
+    node_id: str
+
+
+class ReleaseTaskRequest(BaseModel):
+    node_id: str
+    reason: Optional[str] = None
+
+
 # ===========================================================================
 # 17. Health / Summary
 # ===========================================================================
