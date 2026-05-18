@@ -1,0 +1,13 @@
+{
+  "name": "agent-cluster",
+  "label": "Cluster",
+  "description": "Distributed Hermes cluster dashboard — nodes, tasks, leases, and cluster health at a glance",
+  "icon": "Network",
+  "version": "0.8.0",
+  "tab": {
+    "path": "/cluster",
+    "position": "after:kanban"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}
