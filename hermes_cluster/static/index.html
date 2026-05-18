@@ -138,6 +138,42 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Ar
 .status-dot.offline { background: var(--red); }
 .status-dot.unknown { background: var(--orange); }
 .tag { display: inline-block; padding: 2px 6px; background: rgba(88,166,255,0.1); border-radius: 4px; font-size: 11px; color: var(--accent); margin: 2px; }
+
+/* Setup Wizard */
+.wizard-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.wizard-container { background: var(--card); border: 1px solid var(--border); border-radius: 12px; max-width: 600px; width: 90%; max-height: 90vh; overflow-y: auto; padding: 32px; }
+.wizard-title { font-size: 22px; font-weight: 700; margin-bottom: 4px; color: var(--text); }
+.wizard-subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 24px; }
+.wizard-steps { display: flex; gap: 8px; margin-bottom: 24px; }
+.wizard-step-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+.wizard-step-dot.active { background: var(--accent); }
+.wizard-step-dot.done { background: var(--green); }
+.wizard-role-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+.wizard-role-card { background: var(--bg); border: 2px solid var(--border); border-radius: 8px; padding: 24px 16px; text-align: center; cursor: pointer; transition: all .15s; }
+.wizard-role-card:hover { border-color: var(--text-dim); }
+.wizard-role-card.selected { border-color: var(--accent); }
+.wizard-role-card .role-icon { font-size: 36px; margin-bottom: 12px; }
+.wizard-role-card .role-name { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+.wizard-role-card .role-desc { font-size: 12px; color: var(--text-dim); }
+.wizard-form { display: flex; flex-direction: column; gap: 16px; }
+.wizard-form .form-group label { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; display: block; }
+.wizard-form .form-group input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+.wizard-form .form-group input:focus { outline: none; border-color: var(--accent); }
+.wizard-cap-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.wizard-cap-item { display: flex; align-items: center; gap: 4px; padding: 4px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .15s; }
+.wizard-cap-item:hover { border-color: var(--accent); }
+.wizard-cap-item.selected { background: rgba(88,166,255,0.15); border-color: var(--accent); color: var(--accent); }
+.wizard-cap-item input[type="checkbox"] { margin: 0; cursor: pointer; }
+.wizard-summary { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.wizard-summary .summary-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.wizard-summary .summary-row:last-child { border-bottom: none; }
+.wizard-summary .summary-key { color: var(--text-dim); }
+.wizard-summary .summary-val { color: var(--text); font-family: monospace; }
+.wizard-token-row { display: flex; align-items: center; gap: 8px; }
+.wizard-token-row .token-value { font-family: monospace; font-size: 12px; color: var(--green); user-select: all; }
+.wizard-token-row .copy-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+.wizard-token-row .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+.wizard-actions { display: flex; gap: 12px; margin-top: 24px; justify-content: flex-end; }
 </style>
 </head>
 <body>
@@ -611,7 +647,223 @@ function EndpointPage({ endpointId }) {
 }
 
 // ===== Main App =====
+
+// ===== Setup Wizard =====
+const ALL_CAPS = ['planning','reviewing','scheduling','coding','testing','debugging','documentation','deployment'];
+
+function SetupWizard({ onComplete }) {
+  const [step, setStep] = useState(1);
+  const [role, setRole] = useState(null);
+  const [config, setConfig] = useState({
+    cluster_id: 'hermes-cluster', node_id: 'main-node', node_name: 'Main Node',
+    capabilities: ['planning','reviewing','scheduling'], port: 8787,
+    endpoint: '', token: '', auto_start: true,
+  });
+  const [testResult, setTestResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const apiBase = useApiBase();
+
+  const updateConfig = (key, val) => setConfig(prev => ({...prev, [key]: val}));
+
+  const toggleCap = (cap) => {
+    setConfig(prev => {
+      const caps = prev.capabilities.includes(cap)
+        ? prev.capabilities.filter(c => c !== cap)
+        : [...prev.capabilities, cap];
+      return {...prev, capabilities: caps};
+    });
+  };
+
+  const testConnection = async () => {
+    setTesting(true); setTestResult(null); setError(null);
+    try {
+      const res = await fetch(apiBase + '/api/v1/setup/test-connection', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ endpoint: config.endpoint }),
+      });
+      const data = await res.json();
+      if (res.ok) { setTestResult(data); }
+      else { setError(data.detail || 'Connection failed'); }
+    } catch(e) { setError(e.message); }
+    setTesting(false);
+  };
+
+  const submitConfig = async () => {
+    setSaving(true); setError(null);
+    try {
+      const body = { ...config, role, node_name: config.node_name || (role === 'main' ? 'Main Node' : config.node_id) };
+      const res = await fetch(apiBase + '/api/v1/setup/config', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.ok) { onComplete(); }
+      else { setError(data.detail || 'Failed to save config'); }
+    } catch(e) { setError(e.message); }
+    setSaving(false);
+  };
+
+  const copyToken = () => {
+    navigator.clipboard.writeText(config.token);
+    setTokenCopied(true);
+    setTimeout(() => setTokenCopied(false), 2000);
+  };
+
+  const canProceed = () => {
+    if (step === 1) return role !== null;
+    if (step === 2) {
+      if (role === 'main') return config.cluster_id && config.node_id;
+      return config.endpoint && config.token && config.node_id;
+    }
+    return true;
+  };
+
+  return (
+    <div className="wizard-overlay">
+      <div className="wizard-container">
+        <div className="wizard-steps">
+          {[1,2,3].map(s => (
+            <div key={s} className={`wizard-step-dot ${step === s ? 'active' : step > s ? 'done' : ''}`} />
+          ))}
+        </div>
+
+        {step === 1 && (
+          <div>
+            <div className="wizard-title">🔧 Cluster Setup</div>
+            <div className="wizard-subtitle">Choose the role for this node</div>
+            <div className="wizard-role-grid">
+              <div className={`wizard-role-card ${role === 'main' ? 'selected' : ''}`}
+                   onClick={() => setRole('main')}>
+                <div className="role-icon" style={{color:'var(--green)'}}>🟢</div>
+                <div className="role-name">Main Node</div>
+                <div className="role-desc">Create a new cluster. Other nodes will join yours.</div>
+              </div>
+              <div className={`wizard-role-card ${role === 'worker' ? 'selected' : ''}`}
+                   onClick={() => setRole('worker')}>
+                <div className="role-icon" style={{color:'var(--accent)'}}>🔵</div>
+                <div className="role-name">Worker Node</div>
+                <div className="role-desc">Join an existing cluster as a worker.</div>
+              </div>
+            </div>
+            <div className="wizard-actions">
+              <button className="btn primary" disabled={!canProceed()} onClick={() => setStep(2)}>Next →</button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div>
+            <div className="wizard-title">⚙️ Configuration</div>
+            <div className="wizard-subtitle">{role === 'main' ? 'Configure your main node' : 'Enter connection details'}</div>
+            <div className="wizard-form">
+              {role === 'main' && (
+                <React.Fragment>
+                  <div className="form-group">
+                    <label>Cluster ID *</label>
+                    <input type="text" value={config.cluster_id} onChange={e => updateConfig('cluster_id', e.target.value)} placeholder="hermes-cluster" />
+                  </div>
+                  <div className="form-group">
+                    <label>Node ID *</label>
+                    <input type="text" value={config.node_id} onChange={e => updateConfig('node_id', e.target.value)} placeholder="main-node" />
+                  </div>
+                  <div className="form-group">
+                    <label>Node Name</label>
+                    <input type="text" value={config.node_name} onChange={e => updateConfig('node_name', e.target.value)} placeholder="Main Node" />
+                  </div>
+                  <div className="form-group">
+                    <label>Port</label>
+                    <input type="number" value={config.port} onChange={e => updateConfig('port', parseInt(e.target.value) || 8787)} placeholder="8787" />
+                  </div>
+                </React.Fragment>
+              )}
+              {role === 'worker' && (
+                <React.Fragment>
+                  <div className="form-group">
+                    <label>Main Node Endpoint *</label>
+                    <input type="text" value={config.endpoint} onChange={e => updateConfig('endpoint', e.target.value)} placeholder="http://192.168.1.10:8787" />
+                  </div>
+                  <div className="form-group">
+                    <label>Token *</label>
+                    <input type="text" value={config.token} onChange={e => updateConfig('token', e.target.value)} placeholder="cluster token" />
+                  </div>
+                  <div className="actions" style={{marginTop:0}}>
+                    <button className="btn small" onClick={testConnection} disabled={testing || !config.endpoint}>
+                      {testing ? '⏳ Testing...' : '🔗 测试连接'}
+                    </button>
+                    {testResult && <span style={{color:'var(--green)',fontSize:12}}>✓ Connected — {testResult.cluster_id} ({testResult.node_count} nodes)</span>}
+                    {error && <span style={{color:'var(--red)',fontSize:12}}>✗ {error}</span>}
+                  </div>
+                  <div className="form-group">
+                    <label>Node ID *</label>
+                    <input type="text" value={config.node_id} onChange={e => updateConfig('node_id', e.target.value)} placeholder="worker-abc123" />
+                  </div>
+                  <div className="form-group">
+                    <label>Node Name</label>
+                    <input type="text" value={config.node_name} onChange={e => updateConfig('node_name', e.target.value)} placeholder="(same as Node ID)" />
+                  </div>
+                </React.Fragment>
+              )}
+              <div className="form-group">
+                <label>Capabilities</label>
+ <div className="wizard-cap-grid">
+                  {ALL_CAPS.map(cap => (
+                    <div key={cap} className={`wizard-cap-item ${config.capabilities.includes(cap) ? 'selected' : ''}`} onClick={() => toggleCap(cap)}>
+                      <input type="checkbox" checked={config.capabilities.includes(cap)} readOnly />
+                      {cap}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="wizard-actions">
+              <button className="btn" onClick={() => setStep(1)}>← Back</button>
+              <button className="btn primary" disabled={!canProceed()} onClick={() => setStep(3)}>Next →</button>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div>
+            <div className="wizard-title">📋 Review & Start</div>
+            <div className="wizard-subtitle">Review your configuration before starting</div>
+            <div className="wizard-summary">
+              <div className="summary-row"><span className="summary-key">Role</span><span className="summary-val">{role}</span></div>
+              {role === 'main' && <div className="summary-row"><span className="summary-key">Cluster ID</span><span className="summary-val">{config.cluster_id}</span></div>}
+              <div className="summary-row"><span className="summary-key">Node ID</span><span className="summary-val">{config.node_id}</span></div>
+              <div className="summary-row"><span className="summary-key">Node Name</span><span className="summary-val">{config.node_name || config.node_id}</span></div>
+              <div className="summary-row"><span className="summary-key">Capabilities</span><span className="summary-val">{config.capabilities.join(', ')}</span></div>
+              {role === 'main' && <div className="summary-row"><span className="summary-key">Port</span><span className="summary-val">{config.port}</span></div>}
+              {role === 'worker' && <div className="summary-row"><span className="summary-key">Endpoint</span><span className="summary-val">{config.endpoint}</span></div>}
+              <div className="summary-row">
+                <span className="summary-key">Token</span>
+                <span className="summary-val">
+                  <span className="wizard-token-row">
+                    <span className="token-value">{role === 'main' ? config.token || '(will be generated)' : config.token}</span>
+                    {role === 'main' && <button className="copy-btn" onClick={copyToken}>{tokenCopied ? '✓ Copied' : 'Copy'}</button>}
+                  </span>
+                </span>
+              </div>
+            </div>
+            {error && <div style={{color:'var(--red)',fontSize:13,marginTop:12}}>✗ {error}</div>}
+            <div className="wizard-actions">
+              <button className="btn" onClick={() => setStep(2)}>← Back</button>
+              <button className="btn primary" onClick={submitConfig} disabled={saving}>
+                {saving ? '⏳ Saving...' : '🚀 Start Cluster'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
+  const [setupComplete, setSetupComplete] = useState(null);
+  const [setupLoading, setSetupLoading] = useState(true);
   const [apiBase, setApiBase] = useState('');
   const [apiBaseInput, setApiBaseInput] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
@@ -653,6 +905,42 @@ function App() {
     if (url.endsWith('/')) url = url.slice(0, -1);
     setApiBase(url);
   };
+
+  // Check setup status on mount
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(apiBase + '/api/v1/setup/status');
+        if (res.ok) {
+          const data = await res.json();
+          setSetupComplete(data.setup_complete);
+        } else {
+          setSetupComplete(true); // if endpoint doesn't exist, show dashboard
+        }
+      } catch(e) {
+        setSetupComplete(true); // on error, show dashboard
+      }
+      setSetupLoading(false);
+    })();
+  }, [apiBase]);
+
+  // Show loading spinner while checking setup
+  if (setupLoading) {
+    return (
+      <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',color:'var(--text-dim)'}}>
+        <span>Loading...</span>
+      </div>
+    );
+  }
+
+  // Show setup wizard if setup not complete
+  if (setupComplete === false) {
+    return (
+      <ApiBaseContext.Provider value={apiBase}>
+        <SetupWizard onComplete={() => setSetupComplete(true)} />
+      </ApiBaseContext.Provider>
+    );
+  }
 
   return (
     <ApiBaseContext.Provider value={apiBase}>

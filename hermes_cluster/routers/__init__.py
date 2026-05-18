@@ -12,6 +12,7 @@ from .workflow import router as workflow_router
 from .status import router as status_router
 from .config import router as config_router
 from .visualization import router as visualization_router
+from .setup import router as setup_router
 
 __all__ = [
     "nodes_router",
@@ -26,4 +27,5 @@ __all__ = [
     "status_router",
     "config_router",
     "visualization_router",
+    "setup_router",
 ]

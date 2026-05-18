@@ -32,6 +32,7 @@ from .routers import (
     status_router,
     config_router,
     visualization_router,
+    setup_router,
 )
 from .routers import nodes as nodes_mod
 from .routers import tasks as tasks_mod
@@ -45,6 +46,7 @@ from .routers import workflow as workflow_mod
 from .routers import status as status_mod
 from .routers import config as config_mod
 from .routers import visualization as visualization_mod
+from .routers import setup as setup_mod
 
 
 def create_app(
@@ -120,6 +122,7 @@ def create_app(
     app.include_router(status_router)
     app.include_router(config_router)
     app.include_router(visualization_router)
+    app.include_router(setup_router)
 
     # Health endpoint (outside /api/v1)
     @app.get("/health")
