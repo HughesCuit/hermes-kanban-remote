@@ -1,8 +1,0 @@
-name: hermes-agent-cluster
-version: 3.0.0
-description: "Distributed Kanban cluster extension — multi-node task coordination via hermes-agent-cluster Go service with auto-start"
-author: "Heventure Group"
-hooks:
-  - on_session_start
-  - on_session_end
-pip_dependencies: []

@@ -3,15 +3,14 @@
 Python port of Go's internal/heartbeat/watchdog.go.
 Runs as a background thread, checks heartbeat age periodically,
 and emits status change events (online → degraded → offline).
-
-Designed to work with NodeManager's create_watchdog_registry() adapter.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -27,17 +26,14 @@ class WatchdogEvent:
         self.event_type = event_type  # "online", "degraded", "offline"
         self.timestamp = datetime.utcnow()
 
-    def __repr__(self) -> str:
-        return f"WatchdogEvent({self.node_id!r}, {self.event_type!r})"
-
 
 class HeartbeatNode:
     """Minimal node info needed by the watchdog."""
 
-    __slots__ = ("node_id", "last_heartbeat", "status")
+    __slots__ = ("id", "last_heartbeat", "status")
 
     def __init__(self, node_id: str, last_heartbeat: datetime, status: str):
-        self.node_id = node_id
+        self.id = node_id
         self.last_heartbeat = last_heartbeat
         self.status = status
 
@@ -146,13 +142,13 @@ class Watchdog:
                 new_status = "online"
 
             if new_status != node.status:
-                self._registry.update_node_status(node.node_id, new_status)
-                evt = WatchdogEvent(node.node_id, new_status)
+                self._registry.update_node_status(node.id, new_status)
+                evt = WatchdogEvent(node.id, new_status)
                 events.append(evt)
                 if self._callback:
                     try:
                         self._callback(evt)
                     except Exception:
-                        logger.exception("watchdog callback error for node %s", node.node_id)
+                        logger.exception("watchdog callback error for node %s", node.id)
 
         return events

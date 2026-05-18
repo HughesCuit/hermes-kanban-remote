@@ -98,7 +98,10 @@ def create_app(
     recovery_mod.init(state)
     schedule_mod.init(state)
     federation_mod.init(state, fed_token)
-    hooks_mod.init(state)
+    # Initialize HookManager for the hooks router
+    from .hooks.manager import HookManager
+    hook_manager = HookManager()
+    hooks_mod.set_hook_manager(hook_manager)
     workflow_mod.init(state)
     status_mod.init(state)
     config_mod.init(state)

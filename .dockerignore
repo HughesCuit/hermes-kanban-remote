@@ -1,7 +1,0 @@
-.git
-*.md
-test-e2e.sh
-.env
-.env.example
-docker-compose*.yml
-Dockerfile*
