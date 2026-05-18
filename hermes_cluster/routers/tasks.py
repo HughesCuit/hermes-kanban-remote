@@ -16,11 +16,12 @@ from ..state import ClusterState
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
 _state: ClusterState = None
+_lease_manager = None
 
-
-def init(state: ClusterState):
-    global _state
+def init(state: ClusterState, lease_manager=None):
+    global _state, _lease_manager
     _state = state
+    _lease_manager = lease_manager
 
 
 def _generate_task_id() -> str:
@@ -49,6 +50,13 @@ async def complete_task(task_id: str):
     task = _state.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="task not found")
+
+    # Revoke lease
+    if _lease_manager:
+        lease = _lease_manager.get_by_task(task_id)
+        if lease:
+            _lease_manager.revoke(lease.id)
+
     _state.set_task_status(task_id, TaskStatus.completed)
     # Auto-transition downstream tasks
     _trigger_downstream(task_id)
@@ -157,6 +165,11 @@ async def claim_task(task_id: str, req: ClaimTaskRequest):
         t.assigned_to = req.node_id
         t.updated_at = __import__("datetime").datetime.utcnow()
         t.version += 1
+
+    # Create lease
+    if _lease_manager:
+        _lease_manager.create(task_id=task_id, node_id=req.node_id)
+
     claimed_task = _state.get_task(task_id)
     return {
         **claimed_task.model_dump(),
@@ -172,6 +185,13 @@ async def release_task(task_id: str, req: ReleaseTaskRequest):
         raise HTTPException(status_code=404, detail="task not found")
     if task.assigned_to != req.node_id:
         raise HTTPException(status_code=403, detail="task is not assigned to this node")
+
+    # Revoke lease
+    if _lease_manager:
+        lease = _lease_manager.get_by_task(task_id)
+        if lease:
+            _lease_manager.revoke(lease.id)
+
     _state.set_task_status(task_id, TaskStatus.ready)
     with _state._tasks_lock:
         t = _state._tasks[task_id]

@@ -301,12 +301,12 @@ class ClusterStore:
             rows = self._conn.execute("SELECT * FROM nodes").fetchall()
         return [self._row_to_node(r) for r in rows]
 
-    def update_heartbeat(self, node_id: str) -> None:
+    def update_heartbeat(self, node_id: str, load: float = 0.0) -> None:
         now = datetime.utcnow()
         with self._tx() as conn:
             conn.execute(
-                "UPDATE nodes SET last_heartbeat = ?, status = ? WHERE id = ?",
-                (_dt_to_str(now), NodeStatus.online.value, node_id),
+                "UPDATE nodes SET last_heartbeat = ?, status = ?, load = ? WHERE id = ?",
+                (_dt_to_str(now), NodeStatus.online.value, load, node_id),
             )
 
     def update_capabilities(self, node_id: str, caps: List[str]) -> None:
@@ -346,6 +346,18 @@ class ClusterStore:
 
     def set_on_capability_change(self, fn: Callable[[str, List[str], List[str]], None]) -> None:
         self._on_capability_change = fn
+
+    def set_node_status(self, node_id: str, status: NodeStatus) -> None:
+        """Set a node's status (online/degraded/offline)."""
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE nodes SET status = ? WHERE id = ?",
+                (status.value, node_id),
+            )
+
+    def append_timeline(self, event) -> None:
+        """Append a timeline event (non-critical, silently ignored)."""
+        pass
 
     def _row_to_node(self, row: sqlite3.Row) -> Node:
         return Node(
@@ -421,6 +433,18 @@ class ClusterStore:
                        WHERE id = ?""",
                     (status.value, _dt_to_str(now), task_id),
                 )
+            return result.rowcount > 0
+
+    def unassign_task(self, task_id: str) -> bool:
+        """Atomically clear assigned_to and set status to ready."""
+        now = datetime.utcnow()
+        with self._tx() as conn:
+            result = conn.execute(
+                """UPDATE tasks SET assigned_to = NULL, status = ?,
+                   updated_at = ?, version = version + 1
+                   WHERE id = ?""",
+                (TaskStatus.ready.value, _dt_to_str(now), task_id),
+            )
             return result.rowcount > 0
 
     def unblock_task(self, task_id: str) -> bool:
@@ -594,6 +618,31 @@ class ClusterStore:
 
     def set_lease_callback(self, fn: Callable[[str, str], None]) -> None:
         self._lease_callback = fn
+
+    def get_lease_by_task(self, task_id: str) -> Optional[Lease]:
+        """Get the active lease for a given task, if any."""
+        if not task_id:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM leases WHERE task_id = ? AND status = ?",
+                (task_id, LeaseStatus.active.value),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_lease(row)
+
+    def get_expired_leases(self) -> List[Lease]:
+        """Get all expired leases.
+
+        Public API — avoids accessing internal _leases/_leases_lock directly.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM leases WHERE status = ?",
+                (LeaseStatus.expired.value,),
+            ).fetchall()
+        return [self._row_to_lease(r) for r in rows]
 
     def _row_to_lease(self, row: sqlite3.Row) -> Lease:
         return Lease(

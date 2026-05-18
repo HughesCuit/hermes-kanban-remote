@@ -189,8 +189,14 @@ class RecoveryManager:
         with self._lock:
             return self._auto_recovery_enabled
 
+    @property
+    def scan_interval(self) -> float:
+        """Public accessor for the auto-recovery scan interval."""
+        with self._lock:
+            return self._scan_interval
+
     def detect_expired_leases(self) -> Dict[str, Any]:
-        """Manually trigger expired lease detection.
+        """Manually trigger expired lease detection and recovery.
 
         Scans all active leases, marks expired ones, and triggers
         recovery for affected nodes.
@@ -201,12 +207,9 @@ class RecoveryManager:
         # This triggers the lease manager's expiry check
         active_leases = self._state.get_active_leases()
 
-        # Check for tasks that were assigned but their leases expired
-        expired_nodes = set()
-        with self._state._leases_lock:
-            for lease in self._state._leases.values():
-                if lease.status.value == "expired":
-                    expired_nodes.add(lease.node_id)
+        # Use public API to get expired leases (avoids accessing internal state)
+        expired_leases = self._state.get_expired_leases()
+        expired_nodes = {lease.node_id for lease in expired_leases}
 
         recovered_nodes = []
         for node_id in expired_nodes:

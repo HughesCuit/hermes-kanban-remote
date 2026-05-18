@@ -121,11 +121,12 @@ class ClusterState:
         with self._nodes_lock:
             return list(self._nodes.values())
 
-    def update_heartbeat(self, node_id: str) -> None:
+    def update_heartbeat(self, node_id: str, load: float = 0.0) -> None:
         with self._nodes_lock:
             if node_id in self._nodes:
                 self._nodes[node_id].last_heartbeat = datetime.utcnow()
                 self._nodes[node_id].status = NodeStatus.online
+                self._nodes[node_id].load = load
 
     def update_capabilities(self, node_id: str, caps: List[str]) -> None:
         with self._nodes_lock:
@@ -151,6 +152,16 @@ class ClusterState:
 
     def set_on_capability_change(self, fn: Callable[[str, List[str], List[str]], None]) -> None:
         self._on_capability_change = fn
+
+    def set_node_status(self, node_id: str, status: NodeStatus) -> None:
+        """Set a node's status (online/degraded/offline)."""
+        with self._nodes_lock:
+            if node_id in self._nodes:
+                self._nodes[node_id].status = status
+
+    def append_timeline(self, event) -> None:
+        """Append a timeline event (non-critical, silently ignored)."""
+        pass
 
     # -----------------------------------------------------------------------
     # Task store
@@ -190,6 +201,23 @@ class ClusterState:
             task.version += 1
             if fail_reason:
                 task.fail_reason = fail_reason
+            return True
+
+    def unassign_task(self, task_id: str) -> bool:
+        """Atomically clear assigned_to and set status to ready.
+
+        This is the proper way to unassign a task — it avoids the race
+        condition of separate set_task_status + direct attribute access.
+        Returns True if the task existed.
+        """
+        with self._tasks_lock:
+            if task_id not in self._tasks:
+                return False
+            task = self._tasks[task_id]
+            task.assigned_to = None
+            task.status = TaskStatus.ready
+            task.updated_at = datetime.utcnow()
+            task.version += 1
             return True
 
     def unblock_task(self, task_id: str) -> bool:
@@ -318,6 +346,34 @@ class ClusterState:
 
     def set_lease_callback(self, fn: Callable[[str, str], None]) -> None:
         self._lease_callback = fn
+
+    def get_lease_by_task(self, task_id: str) -> Optional[Lease]:
+        """Get the active lease for a given task, if any."""
+        if not task_id:
+            return None
+        with self._leases_lock:
+            # Check task index first
+            lease_id = self._task_lease_index.get(task_id)
+            if lease_id and lease_id in self._leases:
+                lease = self._leases[lease_id]
+                if lease.status == LeaseStatus.active:
+                    return lease
+            # Fallback: scan all leases
+            for lease in self._leases.values():
+                if lease.task_id == task_id and lease.status == LeaseStatus.active:
+                    return lease
+            return None
+
+    def get_expired_leases(self) -> List[Lease]:
+        """Get all expired leases.
+
+        Public API — avoids accessing internal _leases/_leases_lock directly.
+        """
+        with self._leases_lock:
+            return [
+                lease for lease in self._leases.values()
+                if lease.status == LeaseStatus.expired
+            ]
 
     # -----------------------------------------------------------------------
     # Sync state

@@ -32,9 +32,13 @@ class Rescheduler:
         """Attempt to reschedule each task in *task_ids*.
 
         For each task:
-        1. Clear its ``assigned_to`` and set status back to ``ready``
+        1. Atomically clear its ``assigned_to`` and set status back to ``ready``
         2. Run the scheduler to pick a new node
         3. If no node is available, mark the task as ``failed``
+
+        Thread-safe: the entire per-task operation is performed under the
+        Rescheduler's lock to prevent concurrent reschedule calls from
+        interfering with each other.
 
         Returns:
             Count of tasks that were successfully rescheduled.
@@ -46,11 +50,9 @@ class Rescheduler:
             if task is None:
                 continue
 
-            # Unassign the task and set it back to ready
-            self._state.set_task_status(task_id, TaskStatus.ready)
-            with self._state._tasks_lock:
-                if task_id in self._state._tasks:
-                    self._state._tasks[task_id].assigned_to = None
+            # Atomically unassign the task and set it back to ready
+            # Uses the public API instead of accessing internal state
+            self._state.unassign_task(task_id)
 
             # Try to schedule it
             scheduled = self._state.schedule_pending()

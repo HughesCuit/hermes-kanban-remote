@@ -1,4 +1,18 @@
-"""Recovery subsystem — detector, revoker, rescheduler.
+"""DEPRECATED: Recovery subsystem — detector, revoker, rescheduler.
+
+.. deprecated::
+    This module is deprecated and will be removed in a future version.
+    Use ``hermes_cluster.recovery`` package instead, which contains the
+    same components (Revoker, Rescheduler, Detector, RecoveryManager) with
+    proper thread safety and public API compliance.
+
+    Migration guide:
+        - ``from hermes_cluster.core.recovery import Revoker``
+          → ``from hermes_cluster.recovery import Revoker``
+        - ``from hermes_cluster.core.recovery import Rescheduler``
+          → ``from hermes_cluster.recovery import Rescheduler``
+        - ``from hermes_cluster.core.recovery import RecoveryDetector``
+          → ``from hermes_cluster.recovery import Detector``
 
 Python port of Go's internal/recovery/ package.
 Handles node failure recovery: revoke leases → reschedule tasks → log events.

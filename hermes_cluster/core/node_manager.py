@@ -95,7 +95,8 @@ class NodeManager:
         self._heartbeat_cfg = heartbeat_config or _HeartbeatConfig()
         self._watchdog_cfg = watchdog_config or _WatchdogConfig()
 
-        # Event listeners
+        # Event listeners (protected by _listeners_lock)
+        self._listeners_lock = threading.Lock()
         self._listeners: List[Callable[[NodeEvent], None]] = []
 
         # Heartbeat sender state
@@ -113,16 +114,22 @@ class NodeManager:
 
     def add_listener(self, fn: Callable[[NodeEvent], None]) -> None:
         """Register a callback for node events."""
-        self._listeners.append(fn)
+        with self._listeners_lock:
+            self._listeners.append(fn)
 
     def remove_listener(self, fn: Callable[[NodeEvent], None]) -> None:
         """Unregister a callback."""
-        self._listeners = [l for l in self._listeners if l is not fn]
+        with self._listeners_lock:
+            self._listeners = [l for l in self._listeners if l is not fn]
 
     def _emit(self, event: NodeEvent) -> None:
         """Fire event to all listeners, log to timeline."""
         logger.debug("node event: %s", event)
-        for fn in self._listeners:
+        # Copy listeners under lock, iterate outside lock to avoid
+        # holding the lock during potentially slow callbacks.
+        with self._listeners_lock:
+            listeners = list(self._listeners)
+        for fn in listeners:
             try:
                 fn(event)
             except Exception:
@@ -414,13 +421,18 @@ class NodeManager:
     # ------------------------------------------------------------------
 
     def create_watchdog_registry(self):
-        """Create a WatchdogRegistry adapter for the HeartbeatWatchdog."""
-        store = self._store
+        """Create a WatchdogRegistry adapter for the HeartbeatWatchdog.
+
+        The adapter routes status changes through NodeManager.set_status()
+        to ensure events are emitted and there's a single path for state
+        changes (fixes M2: watchdog bypassing NodeManager).
+        """
+        node_manager = self
 
         class _Registry:
             def get_all_heartbeat_nodes(self_inner):
                 from ..core.watchdog import HeartbeatNode
-                nodes = store.get_all_nodes()
+                nodes = node_manager._store.get_all_nodes()
                 return [
                     HeartbeatNode(
                         node_id=n.id,
@@ -435,7 +447,8 @@ class NodeManager:
                     ns = NodeStatus(status)
                 except ValueError:
                     ns = NodeStatus.offline
-                store.set_node_status(node_id, ns)
+                # Route through NodeManager to ensure events are emitted
+                node_manager.set_status(node_id, ns)
 
         return _Registry()
 
@@ -460,16 +473,13 @@ class NodeManager:
             self._watchdog = None
 
     def _on_watchdog_event(self, event) -> None:
-        """Handle watchdog status change events."""
-        try:
-            ns = NodeStatus(event.event_type)
-        except ValueError:
-            ns = NodeStatus.offline
+        """Handle watchdog status change events.
 
-        self._emit(NodeEvent(
-            event.node_id, "status_changed",
-            f"watchdog → {event.event_type}",
-        ))
+        Note: status is already updated by the watchdog registry adapter
+        which routes through set_status() — this callback only handles
+        any additional logic needed (e.g. triggering recovery).
+        """
+        pass  # Status change already handled by adapter → set_status()
 
     # ------------------------------------------------------------------
     # Summary

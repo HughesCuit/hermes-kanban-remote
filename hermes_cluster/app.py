@@ -94,12 +94,48 @@ def create_app(
     if config_path:
         state.set_config_path(config_path)
 
+    # --- Initialize managers ---
+    from .core.node_manager import NodeManager
+    from .lease.lease_manager import LeaseManager
+    from .recovery.manager import RecoveryManager
+
+    # Create managers (ClusterState implements the same API as ClusterStore)
+    _node_manager = NodeManager(state)
+    _lease_manager = LeaseManager(state)
+    _recovery_manager = RecoveryManager(state)
+
+    # Wire: watchdog detects offline → trigger recovery
+    def _on_node_event(event):
+        if event.event_type == "status_changed" and "offline" in event.detail:
+            _recovery_manager.trigger_recovery_async(event.node_id)
+
+    _node_manager.add_listener(_on_node_event)
+
+    # Wire: lease expiry → recovery (task needs rescheduling when lease expires)
+    def _on_lease_expired(task_id, node_id):
+        _recovery_manager.trigger_recovery_async(node_id)
+
+    _lease_manager.on_expire(_on_lease_expired)
+
+    # Start background services
+    _node_manager.start_watchdog()
+    _lease_manager.start()
+    _recovery_manager.start_auto_recovery()
+
+    # Start heartbeat for this node
+    _node_manager.start_heartbeat_sender(state.node_id)
+
+    # Store on state for router access
+    state._node_manager = _node_manager
+    state._lease_manager = _lease_manager
+    state._recovery_manager = _recovery_manager
+
     # Wire up all routers with shared state
-    nodes_mod.init(state)
-    tasks_mod.init(state)
+    nodes_mod.init(state, node_manager=_node_manager)
+    tasks_mod.init(state, lease_manager=_lease_manager)
     leases_mod.init(state)
     sync_mod.init(state)
-    recovery_mod.init(state)
+    recovery_mod.init(state, recovery_manager=_recovery_manager)
     schedule_mod.init(state)
     federation_mod.init(state, fed_token)
     # Initialize HookManager for the hooks router
@@ -149,6 +185,14 @@ def create_app(
             content="# No metrics collected yet\n",
             media_type="text/plain",
         )
+
+    # Shutdown handler — stop all background threads
+    @app.on_event("shutdown")
+    async def shutdown():
+        _node_manager.stop_heartbeat_sender()
+        _node_manager.stop_watchdog()
+        _lease_manager.stop()
+        _recovery_manager.stop_auto_recovery()
 
     # Dashboard static file serving
     if static_dir:

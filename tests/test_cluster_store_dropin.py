@@ -42,7 +42,9 @@ def create_app_with_store(**kwargs):
     recovery_mod.init(state)
     schedule_mod.init(state)
     federation_mod.init(state, kwargs.get("fed_token", ""))
-    hooks_mod.init(state)
+    from hermes_cluster.hooks.manager import HookManager
+    hook_manager = HookManager()
+    hooks_mod.set_hook_manager(hook_manager)
     workflow_mod.init(state)
     status_mod.init(state)
     config_mod.init(state)

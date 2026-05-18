@@ -27,13 +27,15 @@ _state: ClusterState = None  # type: ignore[assignment]
 _recovery_manager = None  # Lazy init after state is set
 
 
-def init(state: ClusterState):
+def init(state: ClusterState, recovery_manager=None):
     """Wire up the recovery router with shared cluster state."""
     global _state, _recovery_manager
     _state = state
-    # Import here to avoid circular at module level
-    from ..recovery.manager import RecoveryManager
-    _recovery_manager = RecoveryManager(state)
+    if recovery_manager:
+        _recovery_manager = recovery_manager
+    else:
+        from ..recovery.manager import RecoveryManager
+        _recovery_manager = RecoveryManager(state)
 
 
 def _get_manager():
@@ -114,7 +116,7 @@ async def recovery_auto_status():
     manager = _get_manager()
     return {
         "enabled": manager.is_auto_recovery_enabled,
-        "scan_interval": manager._scan_interval,
+        "scan_interval": manager.scan_interval,
     }
 
 

@@ -226,30 +226,37 @@ class LeaseManager:
 
         Only works on ACTIVE leases. Returns the updated lease, or None if
         the lease was not found or not active.
+
+        Thread-safe: the entire revoke+create is performed under a lock to
+        prevent race conditions where concurrent calls could create duplicate
+        leases for the same task.
         """
         if not lease_id:
             return None
 
-        # Look up the lease — we need to find it regardless of status
-        # Use store's internal query to get the lease, then check status
-        active_leases = self._store.get_active_leases()
-        for lease in active_leases:
-            if lease.id == lease_id:
-                # Revoke the old one and create a new one
-                effective_ttl = additional_ttl or self._config.ttl
-                new_lease = self._store.create_lease(
-                    lease.task_id, lease.node_id, effective_ttl
-                )
-                # Mark old as expired (revoke won't work since it changes status
-                # to revoked, but we want to distinguish extension from revocation)
-                self._store.revoke_lease(lease_id)
-                if new_lease:
-                    logger.debug(
-                        "Lease extended: %s -> %s (task=%s, +%ss)",
-                        lease_id, new_lease.id, lease.task_id,
-                        effective_ttl.total_seconds(),
+        effective_ttl = additional_ttl or self._config.ttl
+
+        # Hold the lock for the entire lookup → create → revoke sequence
+        # to prevent concurrent extend() calls from creating duplicate leases.
+        with self._lock:
+            # Look up the active lease via store (which also updates metrics)
+            active_leases = self._store.get_active_leases()
+            for lease in active_leases:
+                if lease.id == lease_id:
+                    # Create new lease first, then revoke old — this ensures
+                    # we always have a valid lease if the create succeeds.
+                    new_lease = self._store.create_lease(
+                        lease.task_id, lease.node_id, effective_ttl
                     )
-                return new_lease
+                    if new_lease:
+                        # Revoke old lease (marks as revoked, not expired)
+                        self._store.revoke_lease(lease_id)
+                        logger.debug(
+                            "Lease extended: %s -> %s (task=%s, +%ss)",
+                            lease_id, new_lease.id, lease.task_id,
+                            effective_ttl.total_seconds(),
+                        )
+                    return new_lease
 
         return None
 

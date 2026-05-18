@@ -16,33 +16,44 @@ router = APIRouter(prefix="/api/v1/nodes", tags=["nodes"])
 
 # Will be set by the app factory
 _state: ClusterState = None
+_node_manager = None
 
 
-def init(state: ClusterState):
-    global _state
+def init(state: ClusterState, node_manager=None):
+    global _state, _node_manager
     _state = state
+    _node_manager = node_manager
 
 
 @router.post("/join", response_model=JoinResponse)
 async def join(req: JoinRequest):
-    node_id = "node_" + req.node_name
-    node = Node(
-        id=node_id,
-        name=req.node_name,
-        capabilities=req.capabilities,
-    )
-    _state.register_node(node)
-    return JoinResponse(node_id=node_id, status="registered")
+    if _node_manager:
+        node = _node_manager.join(
+            node_id="node_" + req.node_name,
+            name=req.node_name,
+            capabilities=req.capabilities,
+        )
+    else:
+        # Fallback to direct state
+        node_id = "node_" + req.node_name
+        node = Node(id=node_id, name=req.node_name, capabilities=req.capabilities)
+        _state.register_node(node)
+    return JoinResponse(node_id=node.id, status="registered")
 
 
 @router.post("/heartbeat")
 async def heartbeat(req: HeartbeatRequest):
-    _state.update_heartbeat(req.node_id)
+    if _node_manager:
+        _node_manager.send_heartbeat(req.node_id)
+    else:
+        _state.update_heartbeat(req.node_id)
     return {"status": "ok"}
 
 
 @router.get("")
 async def list_nodes():
+    if _node_manager:
+        return _node_manager.get_all_nodes()
     return _state.get_all_nodes()
 
 
