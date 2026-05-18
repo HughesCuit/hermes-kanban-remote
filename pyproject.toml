@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-cluster"
+version = "3.0.0"
+description = "Distributed Kanban cluster extension for Hermes Agent — multi-node task coordination"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Heventure Group"},
+]
+keywords = ["hermes", "agent", "cluster", "distributed", "kanban"]
+
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx",
+]
+
+[tool.setuptools.packages.find]
+include = ["hermes_cluster*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests_v3"]

@@ -6,7 +6,7 @@ set -euo pipefail
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 REPO="HughesCuit/hermes-agent-cluster"
-RAW_BASE="https://raw.githubusercontent.com/${REPO}/main/plugins/hermes-agent-cluster"
+RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 RELEASE_BASE="https://github.com/${REPO}/releases/latest/download"
 BINARY_NAME="hermes-cluster"
 INSTALL_BIN_DIR="${HOME}/.local/bin"
@@ -117,15 +117,53 @@ fi
 # ─── 3. Install Python plugin ───────────────────────────────────────────────
 info "Installing Python plugin..."
 mkdir -p "$PLUGIN_DIR"
-PLUGIN_FILES=("__init__.py" "plugin.yaml" "__main__.py")
-for f in "${PLUGIN_FILES[@]}"; do
-    URL="${RAW_BASE}/${f}"
-    if curl -fsSL --retry 3 --retry-delay 2 -o "${PLUGIN_DIR}/${f}" "$URL" 2>/dev/null; then
-        ok "Downloaded ${f}"
+
+# Fallback function: download individual files (no hermes_cluster package)
+_download_fallback() {
+    local files=("__init__.py" "plugin.yaml" "__main__.py")
+    for f in "${files[@]}"; do
+        local url="${RAW_BASE}/${f}"
+        if curl -fsSL --retry 3 --retry-delay 2 -o "${PLUGIN_DIR}/${f}" "$url" 2>/dev/null; then
+            ok "Downloaded ${f}"
+        else
+            warn "Could not download ${f} (non-fatal)"
+        fi
+    done
+    warn "hermes_cluster/ package not installed — plugin may not work"
+    warn "Install manually: pip install hermes-cluster (when published)"
+}
+
+# Clone repo to temp dir, then copy plugin files + hermes_cluster package
+TMPDIR_PLUGIN="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR_PLUGIN"' EXIT
+
+if command -v git &>/dev/null; then
+    info "Cloning repository..."
+    if git clone --depth 1 "https://github.com/${REPO}.git" "$TMPDIR_PLUGIN/repo" 2>/dev/null; then
+        # Copy plugin entry files
+        for f in __init__.py plugin.yaml __main__.py; do
+            if [[ -f "$TMPDIR_PLUGIN/repo/$f" ]]; then
+                cp "$TMPDIR_PLUGIN/repo/$f" "$PLUGIN_DIR/"
+                ok "Copied ${f}"
+            else
+                warn "Missing ${f} (non-fatal)"
+            fi
+        done
+        # Copy hermes_cluster Python package
+        if [[ -d "$TMPDIR_PLUGIN/repo/hermes_cluster" ]]; then
+            cp -r "$TMPDIR_PLUGIN/repo/hermes_cluster" "$PLUGIN_DIR/"
+            ok "Copied hermes_cluster/"
+        else
+            fail "hermes_cluster/ not found in repo"
+            exit 1
+        fi
     else
-        warn "Could not download ${f} (non-fatal)"
+        warn "Git clone failed, falling back to direct download"
+        _download_fallback
     fi
-done
+else
+    _download_fallback
+fi
 
 # ─── 4. Generate config ─────────────────────────────────────────────────────
 info "Configuring cluster..."
@@ -232,6 +270,11 @@ if [[ -d "$PLUGIN_DIR" ]]; then
     ok "Plugin directory: ${PLUGIN_DIR}"
 else
     fail "Plugin directory missing: ${PLUGIN_DIR}"; ((ERRS++))
+fi
+if [[ -d "$PLUGIN_DIR/hermes_cluster" ]]; then
+    ok "hermes_cluster package: ${PLUGIN_DIR}/hermes_cluster"
+else
+    fail "hermes_cluster package missing"; ((ERRS++))
 fi
 if [[ -f "$CONFIG_FILE" ]]; then
     ok "Config file: ${CONFIG_FILE}"
