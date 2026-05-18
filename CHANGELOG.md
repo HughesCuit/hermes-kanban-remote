@@ -16,16 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v3.0.0] - 2026-05-17
+## [v3.0.0] - 2026-05-18
 
 ### Added / 新增
-- **Python Data Models (T1):** 79 Pydantic v2 classes ported from 74 Go structs, 15 SQLite tables + 3 views, 90 tests / Python数据模型：79个Pydantic v2类从74个Go结构体移植，15个SQLite表+3个视图，90个测试
-- **E2E Regression Test Suite (T13):** 71 tests (67 endpoint + 4 integration) covering all 48 API endpoints / 端到端回归测试套件：71个测试覆盖全部48个API端点
-- **React Dashboard (T12):** Single-file web UI (696 lines) for all 48 cluster API endpoints with dark theme / React仪表盘：单文件Web UI覆盖全部48个集群API端点
+- **Pure Python backend:** Complete rewrite from Go to Python — 7,090 LOC across 10 modules (core, hooks, lease, models, recovery, routers, state, sync) / 纯Python后端：从Go完全重写为Python — 10个模块共7,090行代码
+- **48 REST API endpoints:** Full CRUD for tasks, nodes, leases, federation, hooks, recovery, config, schedule, sync, workflow, visualization / 48个REST API端点：任务、节点、租约、联邦、钩子、恢复、配置、调度、同步、工作流、可视化
+- **Pydantic v2 data models:** 79 model classes, 15 SQLite tables + 3 views / Pydantic v2数据模型：79个模型类，15个SQLite表+3个视图
+- **E2E test suite:** 68 tests passing, covering all core modules / 端到端测试套件：68个测试全部通过
+- **One-click installer:** `install.sh` — auto-detect platform, download binary, install plugin, generate config / 一键安装脚本：自动检测平台、下载二进制、安装插件、生成配置
+- **React Dashboard:** Single-file web UI for all 48 API endpoints with dark theme / React仪表盘：单文件Web UI
 
 ### Changed / 变更
-- Major version bump to v3.0.0 reflecting full-stack Go + Python architecture / 主版本号升至v3.0.0，反映Go+Python全栈架构
-- CHANGELOG backfilled with v1.2.0 and v1.2.1 entries / CHANGELOG回填v1.2.0和v1.2.1条目
+- **Architecture:** Go binary replaced by pure Python FastAPI server — no CGO dependency, `pip install` ready / 架构：Go二进制被纯Python FastAPI服务器替代 — 无CGO依赖
+- **Plugin:** Now self-contained Python package, auto-starts cluster service on session start / 插件：现为自包含Python包，会话启动时自动启动集群服务
+
+### Removed / 移除
+- Go binary (`hermes-cluster`) — replaced by Python implementation / Go二进制 — 被Python实现替代
 
 ---
 
