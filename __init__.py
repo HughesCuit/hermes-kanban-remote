@@ -28,6 +28,20 @@ from typing import Any, Dict, Optional
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
+# Setup wizard (lazy-import safe; lives next to this file)
+try:
+    from setup_wizard import (
+        load_config as _load_wizard_config,
+        save_config as _save_wizard_config,
+        SETUP_PROMPT as _SETUP_PROMPT,
+        WizardState as _WizardState,
+    )
+except ImportError:
+    _load_wizard_config = None  # type: ignore[assignment]
+    _save_wizard_config = None  # type: ignore[assignment]
+    _SETUP_PROMPT = ""  # type: ignore[assignment]
+    _WizardState = None  # type: ignore[assignment]
+
 # Ensure hermes_cluster package is importable when installed as a Hermes plugin.
 # After `hermes plugins install`, the repo root lands at ~/.hermes/plugins/<name>/
 # and hermes_cluster/ sits next to this __init__.py.
@@ -45,6 +59,10 @@ _cluster_config: Dict[str, Any] = {}
 _server_thread: Optional[threading.Thread] = None
 _server_stop = threading.Event()
 _base_url: str = ""
+# Set to True by on_session_start when no config exists
+_needs_setup: bool = False
+# Wizard state tracker (created when the user invokes /cluster-setup)
+_wizard: Optional[Any] = None
 
 DEFAULT_PORT = 8787
 DEFAULT_CLUSTER_ID = "hermes-cluster"
@@ -378,8 +396,47 @@ HANDLERS = {
 # ---------------------------------------------------------------------------
 
 def _on_session_start(**kwargs) -> None:
-    """Auto-start cluster server when session begins."""
+    """Auto-start cluster server when session begins.
+
+    If no persisted config exists, sets ``_needs_setup = True`` and injects
+    the SETUP_PROMPT into the conversation so the LLM guides the user
+    through interactive configuration.
+    """
+    global _needs_setup, _wizard
+
+    # Check for persisted wizard config first
+    wizard_cfg = None
+    if _load_wizard_config is not None:
+        try:
+            wizard_cfg = _load_wizard_config()
+        except Exception as exc:
+            logger.debug("Could not load wizard config: %s", exc)
+
     config = _get_plugin_config()
+
+    # No config at all → trigger setup wizard
+    if wizard_cfg is None and not config.get("token"):
+        _needs_setup = True
+        if _WizardState is not None:
+            _wizard = _WizardState()
+        logger.info("No cluster config detected — setup wizard activated")
+
+        # Inject the setup prompt into the conversation
+        prompt_text = _SETUP_PROMPT or (
+            "🔧 No cluster config found. Run `/cluster-setup` to configure."
+        )
+        inject = kwargs.get("inject_message") or kwargs.get("inject")
+        if callable(inject):
+            try:
+                inject(prompt_text)
+            except Exception as exc:
+                logger.warning("Failed to inject setup prompt: %s", exc)
+        return
+
+    # Config exists — use wizard config if plugin config is bare
+    if wizard_cfg is not None:
+        config.update(wizard_cfg)
+
     if not config.get("auto_start", True):
         return
 
@@ -397,13 +454,86 @@ def _on_session_start(**kwargs) -> None:
     thread.start()
 
 
+# ---------------------------------------------------------------------------
+# /cluster-setup slash command handler
+# ---------------------------------------------------------------------------
+
+def _handle_cluster_setup(args: dict, **kwargs) -> str:
+    """Handle the /cluster-setup slash command.
+
+    Without arguments: returns the interactive setup prompt.
+    With arguments: performs quick-setup in one shot.
+    """
+    global _needs_setup, _wizard
+
+    # Quick-setup path: all required args supplied at once
+    role = args.get("role", "")
+    if role == "main":
+        from setup_wizard import quick_setup_main
+        config = quick_setup_main(
+            cluster_id=args.get("cluster_id", "hermes-cluster"),
+            node_id=args.get("node_id", "main-node"),
+            node_name=args.get("node_name", "Main Node"),
+            capabilities=args.get("capabilities"),
+            port=int(args.get("port", 8787)),
+        )
+        _needs_setup = False
+        return json.dumps({
+           "status": "configured",
+           "role": "main",
+           "token": config["token"],
+           "port": config["port"],
+           "join_hint": (
+               f"Workers join with endpoint=http://<ip>:{config['port']} "
+               f"token={config['token']}"
+           ),
+       }, indent=2)
+
+    if role == "worker":
+        from setup_wizard import quick_setup_worker
+        endpoint = args.get("endpoint", "")
+        token = args.get("token", "")
+        if not endpoint or not token:
+            return json.dumps({"error": "endpoint and token are required for worker setup"})
+        config = quick_setup_worker(
+            endpoint=endpoint,
+            token=token,
+            node_id=args.get("node_id"),
+            node_name=args.get("node_name"),
+            capabilities=args.get("capabilities"),
+        )
+        _needs_setup = False
+        return json.dumps({"status": "configured", "role": "worker", "endpoint": endpoint}, indent=2)
+
+    # Interactive path: start (or restart) the wizard
+    if _WizardState is not None:
+        _wizard = _WizardState()
+        _needs_setup = True
+        return _wizard.current_prompt
+
+    return (
+        "Setup wizard not available (module not loaded). "
+        "Please configure manually via plugin config."
+    )
+
+
+def _handle_wizard_answer(answer: str) -> str:
+    """Feed a user answer into the active wizard.  Returns next prompt or summary."""
+    global _wizard, _needs_setup
+    if _wizard is None:
+        return "No wizard active. Run `/cluster-setup` first."
+    result = _wizard.process_answer(answer)
+    if _wizard.complete:
+        _needs_setup = False
+    return result
+
+
 def _on_session_end(**kwargs) -> None:
     """Stop cluster server when session ends."""
     _stop_server()
     logger.info("Cluster plugin session ended")
 
 
-# ---------------------------------------------------------------------------
 # Plugin registration
 # ---------------------------------------------------------------------------
 
@@ -418,6 +548,52 @@ def register(ctx) -> None:
             description=schema["description"],
             emoji="🏗️",
         )
+
+    # Register /cluster-setup slash command
+    ctx.register_command(
+        name="cluster-setup",
+        handler=_handle_cluster_setup,
+        description="Interactive cluster setup wizard — create or join a cluster",
+        schema={
+            "type": "object",
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "enum": ["main", "worker"],
+                    "description": "Node role (main or worker)",
+                },
+                "cluster_id": {
+                    "type": "string",
+                    "description": "Cluster identifier (main only)",
+                },
+                "node_id": {
+                    "type": "string",
+                    "description": "Unique node identifier",
+                },
+                "node_name": {
+                    "type": "string",
+                    "description": "Friendly display name",
+                },
+                "capabilities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Node capabilities",
+                },
+                "port": {
+                    "type": "integer",
+                    "description": "Server port (main only)",
+                },
+                "endpoint": {
+                    "type": "string",
+                    "description": "Main node URL (worker only)",
+                },
+                "token": {
+                    "type": "string",
+                    "description": "Cluster auth token (worker only)",
+                },
+            },
+        },
+    )
 
     # Register lifecycle hooks
     ctx.register_hook("on_session_start", _on_session_start)
